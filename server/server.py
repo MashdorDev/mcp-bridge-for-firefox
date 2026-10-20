@@ -114,11 +114,14 @@ def port_is_free(port: int) -> bool:
 
 @dataclass
 class BrowserConnection:
-    """One connected browser: a Firefox profile running the add-on"""
+    """One connected browser: a Firefox or Thunderbird profile running the add-on"""
     key: str
     websocket: Any
     name: str
     version: str = ''
+    # 'firefox', or 'thunderbird' for the Thunderbird add-on, which answers a
+    # different set of actions
+    app: str = 'firefox'
     connected_at: float = field(default_factory=time.time)
     # Real input through WebDriver BiDi: whether the person allows it, the port
     # they set (0: find it), and the port it was last found on
@@ -371,8 +374,11 @@ class FoxMCPServer:
             browser.real_input_port = int(data.get('real_input_port') or 0)
         except (TypeError, ValueError):
             browser.real_input_port = 0
+        browser.app = str(data.get('app') or 'firefox').lower()[:20]
         if data.get('name'):
             browser.name = str(data['name'])[:60]
+        elif browser.app == 'thunderbird' and browser.name.startswith('Firefox '):
+            browser.name = 'Thunderbird ' + browser.name[len('Firefox '):]
 
         instance_id = str(data.get('instance_id') or '')
         if not instance_id or instance_id == browser.key:
