@@ -150,7 +150,8 @@ async function exportSettings() {
   const data = {
     format: 'mcp-bridge-settings',
     version: browser.runtime.getManifest().version,
-    settings: await loadSettings(),
+    // The pairing token stays in this profile; an export is a file people share
+    settings: { ...(await loadSettings()), pairingToken: undefined },
     connection: await browser.storage.local.get(CONNECTION_DEFAULTS),
     reconnect: await browser.storage.sync.get(RETRY_DEFAULTS),
   };
@@ -188,6 +189,7 @@ async function importSettings(file) {
   const connection = picked(data.connection, CONNECTION_DEFAULTS);
   // The name belongs to the profile it came from; keep this profile's own
   delete settings.browserName;
+  delete settings.pairingToken;
   await browser.storage.local.set({ ...settings, ...connection });
   await browser.storage.sync.set(picked(data.reconnect, RETRY_DEFAULTS));
   if (connection.hostname || connection.port) {
@@ -212,8 +214,8 @@ async function reset() {
   clearTimeout(resetArmed);
   resetArmed = null;
   $('reset').textContent = 'Reset all settings';
-  const { browserName } = await loadSettings();
-  await browser.storage.local.set({ ...SETTINGS_DEFAULTS, browserName, ...CONNECTION_DEFAULTS });
+  const { browserName, pairingToken } = await loadSettings();
+  await browser.storage.local.set({ ...SETTINGS_DEFAULTS, browserName, pairingToken, ...CONNECTION_DEFAULTS });
   await browser.storage.sync.set(RETRY_DEFAULTS);
   await browser.runtime.sendMessage({ type: 'configUpdated', config: { ...CONNECTION_DEFAULTS, ...RETRY_DEFAULTS } });
   await load();

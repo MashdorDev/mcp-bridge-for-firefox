@@ -135,6 +135,13 @@
     </div>
   </div>
   <div class="field">
+    <label for="pairingToken">Pairing token</label>
+    <div>
+      <input type="password" id="pairingToken" data-setting="pairingToken" autocomplete="off" spellcheck="false" placeholder="Optional">
+      <div class="hint">Paste the contents of <code>~/.foxmcp/pairing-token</code>, which the server creates. With it set, Firefox answers only a server that holds the same token, so another program on the port gets nothing.</div>
+    </div>
+  </div>
+  <div class="field">
     <label for="hostname">Host</label>
     <div><input type="text" id="hostname" placeholder="localhost"><div class="error" data-error="hostname"></div></div>
   </div>
