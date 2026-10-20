@@ -365,9 +365,11 @@ var mcpChrome = class extends ExtensionAPI {
                 inputType: "insertText", data: target.value }));
               el.dispatchEvent(new view.Event("change", { bubbles: true }));
             }
+            // Read before Enter: a search box empties itself once submitted
+            const value = el.isContentEditable ? el.textContent.slice(0, 200) : el.value;
             if (target.submit) pressOn(el, "Enter");
             ripple(win, windowRect(el));
-            return { label: labelOf(el), value: el.isContentEditable ? el.textContent.slice(0, 200) : el.value };
+            return { label: labelOf(el), value };
           });
         },
 

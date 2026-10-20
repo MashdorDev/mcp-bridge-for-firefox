@@ -206,7 +206,7 @@ async def test_type_sends_the_value_and_reports_what_the_field_holds():
     assert server.sent_request["action"] == "thunderbird.type"
     assert server.sent_request["data"] == {"ref": None, "text": "Search", "value": "Rappi", "clear": True,
                                            "submit": True, "status": ""}
-    assert result == 'Typed into "Search" and pressed Enter; it now holds "Rappi"'
+    assert result == 'Typed "Rappi" into "Search" and pressed Enter'
 
 
 @pytest.mark.asyncio

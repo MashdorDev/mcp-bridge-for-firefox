@@ -1435,8 +1435,9 @@ class FoxMCPTools:
             data = await self._thunderbird_request({"action": "thunderbird.type", "data": {
                 "ref": ref, "text": text, "value": value, "clear": clear, "submit": submit,
                 "status": (status or "").strip()[:MAX_STATUS_LENGTH]}}, "type in Thunderbird")
-            pressed = " and pressed Enter" if submit else ""
-            return f'Typed into "{data.get("label")}"{pressed}; it now holds "{data.get("value")}"'
+            if submit:
+                return f'Typed "{data.get("value")}" into "{data.get("label")}" and pressed Enter'
+            return f'Typed into "{data.get("label")}"; it now holds "{data.get("value")}"'
 
         # Delete and Backspace move mail to the trash in the message list
         THUNDERBIRD_KEYS = ("Enter", "Escape", "Tab", "Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
