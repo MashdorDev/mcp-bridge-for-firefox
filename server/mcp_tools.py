@@ -315,6 +315,11 @@ class FoxMCPTools:
             if browser is not None and browser.app != needed:
                 raise ToolError(f'"{browser.name}" is {browser.app.title()}, and {fn.__name__} needs '
                                 f'{needed.title()}. browsers_select a {needed.title()} browser first.')
+            # Thunderbird reaches mail, so it only works once paired. The add-on
+            # refuses too; this says why without a round trip.
+            if browser is not None and needed == 'thunderbird' and not browser.paired:
+                raise ToolError(f'"{browser.name}" is not paired with this server. Paste the token from '
+                                f'~/.foxmcp/pairing-token into MCP Bridge for Thunderbird\'s options.')
             return await fn(*args, **kwargs)
         return wrapper
 
