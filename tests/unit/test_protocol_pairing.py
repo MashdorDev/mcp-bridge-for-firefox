@@ -16,7 +16,8 @@ from pathlib import Path
 # reach, and a handler only looks orphaned if both are read.
 SENDER_FILES = ("server/mcp_tools.py", "server/server.py")
 
-HANDLER_FILE = "extension/background.js"
+# Thunderbird has an add-on of its own, answering the thunderbird.* actions
+HANDLER_FILES = ("extension/background.js", "thunderbird/background.js")
 
 # Handlers deliberately kept without a sender. Each needs a reason, and the
 # test below fails if a name here stops being handled - an exemption that
@@ -47,7 +48,7 @@ def _actions_sent_by_server():
     """
     actions = set()
     for name in SENDER_FILES:
-        source = (_repo_root() / name).read_text()
+        source = (_repo_root() / name).read_text(encoding="utf-8")
         actions |= set(re.findall(r'"action":\s*"([A-Za-z_]+\.[A-Za-z_]+)"', source))
     return actions
 
@@ -58,8 +59,11 @@ def _actions_handled_by_extension():
     'ping' is matched by an if above the switch rather than a case, so it is
     outside this scan; every other action reaches the extension through a case.
     """
-    source = (_repo_root() / HANDLER_FILE).read_text()
-    return set(re.findall(r"case\s*'([A-Za-z_]+\.[A-Za-z_]+)'", source))
+    actions = set()
+    for name in HANDLER_FILES:
+        source = (_repo_root() / name).read_text(encoding="utf-8")
+        actions |= set(re.findall(r"case\s*'([A-Za-z_]+\.[A-Za-z_]+)'", source))
+    return actions
 
 
 def test_every_sent_action_has_an_extension_handler():
@@ -77,7 +81,7 @@ def test_every_sent_action_has_an_extension_handler():
         f"format changed, or did this test stop reading the right files?"
     )
     assert sent <= handled, (
-        f"actions with no handler in {HANDLER_FILE}: {sorted(sent - handled)}"
+        f"actions with no handler in {list(HANDLER_FILES)}: {sorted(sent - handled)}"
     )
 
 
@@ -95,7 +99,7 @@ def test_no_orphan_handler_in_the_extension():
     orphans = handled - sent - UNSENT_HANDLERS_ALLOWED
 
     assert not orphans, (
-        f"handlers in {HANDLER_FILE} that nothing sends: {sorted(orphans)}. "
+        f"handlers in {list(HANDLER_FILES)} that nothing sends: {sorted(orphans)}. "
         f"Either send the action from {SENDER_FILES[0]}, delete the handler, or "
         f"add the name to UNSENT_HANDLERS_ALLOWED with the reason it stays."
     )
@@ -111,7 +115,7 @@ def test_every_allowed_orphan_is_still_handled():
     stale = UNSENT_HANDLERS_ALLOWED - handled
 
     assert not stale, (
-        f"UNSENT_HANDLERS_ALLOWED names actions {HANDLER_FILE} no longer handles: "
+        f"UNSENT_HANDLERS_ALLOWED names actions {list(HANDLER_FILES)} no longer handles: "
         f"{sorted(stale)}. Remove them from the list."
     )
 

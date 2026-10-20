@@ -202,6 +202,7 @@ class FoxMCPTools:
         'requests': '_setup_request_monitoring_tools',
         'debug': '_setup_debug_tools',
         'browsers': '_setup_browser_tools',
+        'thunderbird': '_setup_thunderbird_tools',
     }
 
     def __init__(self, websocket_server, disabled_groups=None, enabled_tools=None):
@@ -1265,6 +1266,52 @@ class FoxMCPTools:
             return f"Screenshot saved to '{filename}' ({details}, size: {len(image_data)} bytes)"
         except Exception as e:
             return f"Error saving screenshot to file '{filename}': {str(e)}"
+
+    def _thunderbird_refusal(self) -> Optional[str]:
+        """Why a thunderbird_* tool cannot run on the active browser, or None"""
+        server = self.websocket_server
+        browser = getattr(server, 'browsers', {}).get(getattr(server, 'active_browser', None))
+        if browser is None or browser.app == 'thunderbird':
+            return None  # no browser: send_request_and_wait says so
+        return (f'Error: "{browser.name}" is Firefox. Thunderbird tools need the Thunderbird add-on; '
+                f'browsers_select your Thunderbird first.')
+
+    def _setup_thunderbird_tools(self):
+        """Setup tools only the Thunderbird add-on answers"""
+
+        @self._tool()
+        async def thunderbird_capture_window(
+            filename: Optional[str] = None,
+            scale: float = 1.0
+        ) -> Union[str, Image]:
+            """Capture Thunderbird's main window, mail view included
+
+            Unlike tabs_capture_screenshot this shows the whole window: folder
+            pane, message list and whichever tab is open, add-on tabs too.
+            Without a filename the image comes back to you to look at; with one
+            it is saved and you get the path.
+
+            Args:
+                filename: File to save the PNG to (optional)
+                scale: 0.25 to 1; below 1 makes the image smaller (default: 1)
+            """
+            refusal = self._thunderbird_refusal()
+            if refusal:
+                return refusal
+            response = await self.websocket_server.send_request_and_wait({
+                "id": str(uuid.uuid4()),
+                "type": "request",
+                "action": "thunderbird.captureWindow",
+                "data": {"scale": min(max(scale, 0.25), 1.0)},
+                "timestamp": datetime.now().isoformat()
+            })
+            if "error" in response:
+                return f"Error capturing Thunderbird: {response['error']}"
+            if response.get("type") == "error":
+                return f"Failed to capture Thunderbird: {response.get('data', {}).get('message', 'Unknown error')}"
+            data = response.get("data", {})
+            return self._screenshot_result(
+                data.get("dataUrl", ""), "png", filename, f"Thunderbird window, {data.get('width')}x{data.get('height')}")
 
     def _setup_history_tools(self):
         """Setup history management tools"""
