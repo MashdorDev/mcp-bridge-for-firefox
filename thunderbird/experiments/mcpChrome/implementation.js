@@ -195,6 +195,7 @@ function hide(win) {
 
 var mcpChrome = class extends ExtensionAPI {
   getAPI() {
+    const { extension } = this;
     return {
       mcpChrome: {
         async captureWindow(scale) {
@@ -264,6 +265,39 @@ var mcpChrome = class extends ExtensionAPI {
             if (target.doubleClick) fire("dblclick", 2);
             ripple(win, rect);
             return { role: el.getAttribute("role") || el.localName, label: labelOf(el) };
+          });
+        },
+
+        // Updates a local build of an add-on that is already installed, so a
+        // developer's change reaches Thunderbird without the file dialog. It
+        // cannot add an add-on, and leaves signed ones (from
+        // addons.thunderbird.net) alone.
+        async updateAddon(path) {
+          return reporting(async () => {
+            const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
+            if (!/\.xpi$/i.test(path) || !PathUtils.isAbsolute(path)) throw new ExtensionError(`${path} is not an absolute .xpi path`);
+            if (!(await IOUtils.exists(path))) throw new ExtensionError(`${path} does not exist`);
+            const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+            file.initWithPath(path);
+            const install = await AddonManager.getInstallForFile(file);
+            const incoming = install?.addon;
+            if (!incoming || install.state === AddonManager.STATE_DOWNLOAD_FAILED) {
+              throw new ExtensionError(`${path} is not an add-on Thunderbird can read`);
+            }
+            const current = await AddonManager.getAddonByID(incoming.id);
+            if (!current) throw new ExtensionError(`${incoming.id} is not installed; install it by hand the first time`);
+            if (current.signedState > AddonManager.SIGNEDSTATE_MISSING) {
+              throw new ExtensionError(`${incoming.id} is a signed add-on; only local builds are updated this way`);
+            }
+            const result = { id: incoming.id, name: current.name, from: current.version, to: incoming.version };
+            // Updating this add-on restarts it, which would drop the reply;
+            // answer first
+            if (incoming.id === extension.id) {
+              Services.tm.dispatchToMainThread(() => install.install());
+              return { ...result, restarting: true };
+            }
+            await install.install();
+            return result;
           });
         },
 

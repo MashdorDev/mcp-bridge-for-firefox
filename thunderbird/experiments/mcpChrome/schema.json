@@ -41,6 +41,13 @@
         ]
       },
       {
+        "name": "updateAddon",
+        "type": "function",
+        "async": true,
+        "description": "Update an installed, unsigned add-on from a local .xpi file",
+        "parameters": [{ "name": "path", "type": "string" }]
+      },
+      {
         "name": "hideAgent",
         "type": "function",
         "async": true,
