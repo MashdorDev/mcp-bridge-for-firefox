@@ -131,3 +131,32 @@ async def test_snapshot_lists_refs_labels_and_where_they_are():
     assert server.sent_request["data"] == {"maxElements": 1}
     assert 'r1 toolbarbutton "Get Messages" at 40,20' in result
     assert "first 1 of 2" in result
+
+
+@pytest.mark.asyncio
+async def test_click_needs_a_ref_or_text():
+    server = StubServer("thunderbird")
+
+    assert "Give a ref" in await call(server, "thunderbird_click")
+    assert server.sent_request is None
+
+
+@pytest.mark.asyncio
+async def test_click_sends_the_target_and_says_what_it_clicked():
+    server = StubServer("thunderbird")
+    server.response = {"type": "response", "data": {"role": "treeitem", "label": "Inbox"}}
+    result = await call(server, "thunderbird_click", text="Inbox", double_click=True, status="Opening the inbox")
+
+    assert server.sent_request["action"] == "thunderbird.click"
+    assert server.sent_request["data"] == {"ref": None, "text": "Inbox", "doubleClick": True, "rightClick": False,
+                                           "status": "Opening the inbox"}
+    assert result == 'Double-clicked treeitem "Inbox"'
+
+
+@pytest.mark.asyncio
+async def test_click_passes_on_the_add_on_refusal():
+    server = StubServer("thunderbird")
+    server.response = {"type": "error", "data": {"message": "Clicking in Thunderbird is off."}}
+
+    assert "Failed to click in Thunderbird: Clicking in Thunderbird is off." in await call(
+        server, "thunderbird_click", ref="r1")

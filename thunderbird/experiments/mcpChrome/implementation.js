@@ -5,6 +5,12 @@
 // arrives as "An unexpected error occurred"
 const { ExtensionError } = ChromeUtils.importESModule("resource://gre/modules/ExtensionUtils.sys.mjs").ExtensionUtils;
 const XHTML = "http://www.w3.org/1999/xhtml";
+const SVG = "http://www.w3.org/2000/svg";
+const AGENT_COLOR = "#d97757"; // the Firefox add-on's overlay colour
+// The cursor stays while the agent works, between steps too; it goes when the
+// server connection closes (hideAgent) or after this long with no action
+const AGENT_IDLE_MS = 120000;
+
 function mainWindow() {
   const win = Services.wm.getMostRecentWindow("mail:3pane");
   if (!win) throw new ExtensionError("No Thunderbird main window is open");
@@ -113,6 +119,78 @@ async function reporting(fn) {
   }
 }
 
+function findElement(win, ref, text) {
+  if (ref) {
+    const el = refs.get(ref)?.deref();
+    if (!el?.isConnected) throw new ExtensionError(`${ref} is gone; take a new thunderbird_snapshot`);
+    return el;
+  }
+  const wanted = (text || "").toLowerCase();
+  const shown = shownElements(win);
+  const el = shown.find((e) => labelOf(e).toLowerCase() === wanted)
+    || shown.find((e) => labelOf(e).toLowerCase().includes(wanted));
+  if (!el) throw new ExtensionError(`Nothing shown is labelled "${text}"`);
+  return el;
+}
+
+// --- The overlay: a cursor, a box and a line saying what the agent does -------
+
+function overlay(win) {
+  let root = win.document.getElementById("mcp-bridge-agent");
+  if (root) return root;
+  const make = (tag, css, ns = XHTML) => {
+    const el = win.document.createElementNS(ns, tag);
+    if (css) el.setAttribute("style", css);
+    return el;
+  };
+  root = make("div", "position:fixed;inset:0;pointer-events:none;z-index:2147483647;opacity:0;transition:opacity .4s");
+  root.id = "mcp-bridge-agent";
+  const box = make("div", `position:absolute;border:2px solid ${AGENT_COLOR};border-radius:4px;opacity:0;transition:left .3s, top .3s, width .3s, height .3s, opacity .3s`);
+  const ring = make("div", `position:absolute;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;border:2px solid ${AGENT_COLOR};opacity:0`);
+  const label = make("div", `position:absolute;left:12px;bottom:28px;padding:4px 10px;border-radius:6px;background:${AGENT_COLOR};color:white;font:12px system-ui;opacity:0;transition:opacity .3s`);
+  const cursor = make("svg", "position:absolute;left:0;top:0;width:22px;height:22px;overflow:visible;transition:transform .45s cubic-bezier(.2,.8,.2,1)", SVG);
+  const arrow = make("path", "", SVG);
+  arrow.setAttribute("d", "M0 0 L0 17 L4.5 13 L7.5 20 L10.5 18.8 L7.5 12 L13 12 Z");
+  arrow.setAttribute("fill", AGENT_COLOR);
+  arrow.setAttribute("stroke", "white");
+  arrow.setAttribute("stroke-width", "1.5");
+  cursor.append(arrow);
+  root.append(box, ring, label, cursor);
+  Object.assign(root, { box, ring, label, cursor });
+  win.document.documentElement.append(root);
+  root.cursor.style.transform = `translate(${win.innerWidth / 2}px, ${win.innerHeight / 2}px)`;
+  return root;
+}
+
+const pause = (win, ms) => new Promise((resolve) => win.setTimeout(resolve, ms));
+
+async function showAction(win, rect, status) {
+  const o = overlay(win);
+  win.clearTimeout(o.hideTimer);
+  o.style.opacity = "1";
+  Object.assign(o.box.style, { left: `${rect.x - 3}px`, top: `${rect.y - 3}px`,
+    width: `${rect.width + 2}px`, height: `${rect.height + 2}px`, opacity: "1" });
+  o.label.textContent = status || "";
+  o.label.style.opacity = status ? "1" : "0";
+  o.cursor.style.transform = `translate(${rect.x + rect.width / 2}px, ${rect.y + rect.height / 2}px)`;
+  await pause(win, 480);
+}
+
+function ripple(win, rect) {
+  const o = overlay(win);
+  Object.assign(o.ring.style, { left: `${rect.x + rect.width / 2}px`, top: `${rect.y + rect.height / 2}px` });
+  o.ring.animate([{ transform: "scale(.4)", opacity: 1 }, { transform: "scale(1.6)", opacity: 0 }], { duration: 450 });
+  o.hideTimer = win.setTimeout(() => hide(win), AGENT_IDLE_MS);
+}
+
+function hide(win) {
+  const o = win.document.getElementById("mcp-bridge-agent");
+  if (!o) return;
+  win.clearTimeout(o.hideTimer);
+  o.style.opacity = "0";
+  o.box.style.opacity = "0";
+}
+
 // --- The API ----------------------------------------------------------------
 
 var mcpChrome = class extends ExtensionAPI {
@@ -121,16 +199,28 @@ var mcpChrome = class extends ExtensionAPI {
       mcpChrome: {
         async captureWindow(scale) {
           const win = mainWindow();
-          // drawSnapshot composites the chrome and every tab's content, which
-          // tabs.captureVisibleTab cannot: the mail view is not a content tab.
-          const rect = new win.DOMRect(0, 0, win.innerWidth, win.innerHeight);
-          const bitmap = await win.browsingContext.currentWindowGlobal.drawSnapshot(rect, scale, "white");
-          const canvas = win.document.createElementNS(XHTML, "canvas");
-          canvas.width = bitmap.width;
-          canvas.height = bitmap.height;
-          canvas.getContext("2d").drawImage(bitmap, 0, 0);
-          bitmap.close();
-          return { dataUrl: canvas.toDataURL("image/png"), width: canvas.width, height: canvas.height };
+          // The overlay is for the person watching, not for screenshots
+          const agent = win.document.getElementById("mcp-bridge-agent");
+          if (agent) {
+            agent.style.display = "none";
+            // drawSnapshot paints what is on screen; let the hidden overlay
+            // leave it first
+            await new Promise((resolve) => win.requestAnimationFrame(() => win.requestAnimationFrame(resolve)));
+          }
+          try {
+            // drawSnapshot composites the chrome and every tab's content, which
+            // tabs.captureVisibleTab cannot: the mail view is not a content tab.
+            const rect = new win.DOMRect(0, 0, win.innerWidth, win.innerHeight);
+            const bitmap = await win.browsingContext.currentWindowGlobal.drawSnapshot(rect, scale, "white");
+            const canvas = win.document.createElementNS(XHTML, "canvas");
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            canvas.getContext("2d").drawImage(bitmap, 0, 0);
+            bitmap.close();
+            return { dataUrl: canvas.toDataURL("image/png"), width: canvas.width, height: canvas.height };
+          } finally {
+            if (agent) agent.style.display = "";
+          }
         },
 
         async snapshot(maxElements) {
@@ -147,6 +237,38 @@ var mcpChrome = class extends ExtensionAPI {
             });
             return { elements, total: shown.length, skipped: measureErrors.count, skipReason: measureErrors.first };
           });
+        },
+
+        async click(target) {
+          return reporting(async () => {
+            const win = mainWindow();
+            const el = findElement(win, target.ref, target.text);
+            const rect = windowRect(el);
+            await showAction(win, rect, target.status);
+            // The whole sequence a person's click makes, at the element's
+            // centre: tabs and tree rows select on mousedown, buttons act on
+            // click. (nsIDOMWindowUtils.sendMouseEvent no longer exists.)
+            const r = el.getBoundingClientRect();
+            const view = el.ownerDocument.defaultView;
+            const button = target.rightClick ? 2 : 0;
+            const fire = (type, detail) => el.dispatchEvent(new view.MouseEvent(type, {
+              bubbles: true, cancelable: true, composed: true, view, detail, button,
+              buttons: type === "mousedown" ? (button === 2 ? 2 : 1) : 0,
+              clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+            }));
+            for (let count = 1; count <= (target.doubleClick ? 2 : 1); count++) {
+              fire("mousedown", count);
+              fire("mouseup", count);
+              fire(target.rightClick ? "contextmenu" : "click", count);
+            }
+            if (target.doubleClick) fire("dblclick", 2);
+            ripple(win, rect);
+            return { role: el.getAttribute("role") || el.localName, label: labelOf(el) };
+          });
+        },
+
+        async hideAgent() {
+          for (const win of Services.wm.getEnumerator("mail:3pane")) hide(win);
         },
 
         // Pairs without copying the token by hand. Only this one file, at a

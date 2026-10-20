@@ -22,6 +22,32 @@
         ]
       },
       {
+        "name": "click",
+        "type": "function",
+        "async": true,
+        "description": "Move the agent cursor to an element and click it with real mouse events",
+        "parameters": [
+          {
+            "name": "target",
+            "type": "object",
+            "properties": {
+              "ref": { "type": "string", "optional": true },
+              "text": { "type": "string", "optional": true },
+              "doubleClick": { "type": "boolean", "optional": true },
+              "rightClick": { "type": "boolean", "optional": true },
+              "status": { "type": "string", "optional": true }
+            }
+          }
+        ]
+      },
+      {
+        "name": "hideAgent",
+        "type": "function",
+        "async": true,
+        "description": "Take the agent cursor off the window",
+        "parameters": []
+      },
+      {
         "name": "readPairingToken",
         "type": "function",
         "async": true,

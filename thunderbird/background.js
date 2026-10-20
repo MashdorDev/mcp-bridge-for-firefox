@@ -91,6 +91,15 @@ async function handleHelloAck(socket, data) {
   }
 }
 
+// Clicking (and later typing) acts on the person's mail, so it stays off
+// until they turn it on in the options
+async function requireInput() {
+  const { allowInput } = await browser.storage.local.get({ allowInput: false });
+  if (!allowInput) {
+    throw new Error("Clicking in Thunderbird is off. Turn on \"Let the agent click\" in MCP Bridge for Thunderbird's options.");
+  }
+}
+
 async function handleMessage(socket, message) {
   const { id, type, action, data = {} } = message;
   if (type === 'hello_ack') return handleHelloAck(socket, data);
@@ -111,6 +120,12 @@ async function handleMessage(socket, message) {
         break;
       case 'thunderbird.snapshot':
         reply(socket, id, action, await browser.mcpChrome.snapshot(data.maxElements || 200));
+        break;
+      case 'thunderbird.click':
+        await requireInput();
+        reply(socket, id, action, await browser.mcpChrome.click({
+          ref: data.ref || undefined, text: data.text || undefined, doubleClick: !!data.doubleClick,
+          rightClick: !!data.rightClick, status: data.status || undefined }));
         break;
       case 'mail.listAccounts':
         reply(socket, id, action, await listAccounts());
@@ -155,6 +170,10 @@ function connect(port) {
     socket.onmessage = (event) => handleMessage(socket, JSON.parse(event.data));
     socket.onclose = () => {
       if (sockets.get(port) === socket) sockets.delete(port);
+      // The agent is done once no server is left to send it anything
+      if (![...sockets.values()].some((s) => s.readyState === WebSocket.OPEN)) {
+        browser.mcpChrome.hideAgent().catch(() => {});
+      }
       settled(false);
       if (port === PORT) scheduleMain();
     };
