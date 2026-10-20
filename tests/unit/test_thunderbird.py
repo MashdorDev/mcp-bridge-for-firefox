@@ -160,3 +160,38 @@ async def test_click_passes_on_the_add_on_refusal():
 
     assert "Failed to click in Thunderbird: Clicking in Thunderbird is off." in await call(
         server, "thunderbird_click", ref="r1")
+
+
+@pytest.mark.asyncio
+async def test_update_addon_refuses_a_path_that_is_not_an_xpi(tmp_path):
+    server = StubServer("thunderbird")
+    text_file = tmp_path / "notes.txt"
+    text_file.write_text("x")
+
+    assert "is not an .xpi file" in await call(server, "thunderbird_update_addon", path=str(text_file))
+    assert "is not an .xpi file" in await call(server, "thunderbird_update_addon", path=str(tmp_path / "gone.xpi"))
+    assert server.sent_request is None
+
+
+@pytest.mark.asyncio
+async def test_update_addon_sends_the_absolute_path_and_reports_versions(tmp_path):
+    server = StubServer("thunderbird")
+    xpi = tmp_path / "smart-inbox-0.2.1.xpi"
+    xpi.write_bytes(b"PK")
+    server.response = {"type": "response", "data": {"id": "smart-inbox@dorzairi.dev", "name": "Smart Inbox",
+                                                    "from": "0.2.0", "to": "0.2.1"}}
+    result = await call(server, "thunderbird_update_addon", path=str(xpi))
+
+    assert server.sent_request["data"] == {"path": str(xpi)}
+    assert result == "Updated Smart Inbox (smart-inbox@dorzairi.dev) from 0.2.0 to 0.2.1"
+
+
+@pytest.mark.asyncio
+async def test_updating_the_bridge_itself_says_it_restarts(tmp_path):
+    server = StubServer("thunderbird")
+    xpi = tmp_path / "bridge.xpi"
+    xpi.write_bytes(b"PK")
+    server.response = {"type": "response", "data": {"id": "tbmcp@dorzairi.dev", "name": "MCP Bridge for Thunderbird",
+                                                    "from": "0.6.0", "to": "0.7.0", "restarting": True}}
+
+    assert "restarting and reconnects shortly" in await call(server, "thunderbird_update_addon", path=str(xpi))

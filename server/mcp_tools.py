@@ -1305,6 +1305,28 @@ class FoxMCPTools:
         """Setup tools only the Thunderbird add-on answers"""
 
         @self._tool()
+        async def thunderbird_update_addon(path: str) -> str:
+            """Update a Thunderbird add-on from a local .xpi build
+
+            Only an add-on that is already installed and unsigned (a local build,
+            such as MCP Bridge for Thunderbird itself) can be updated; nothing is
+            added, and add-ons from addons.thunderbird.net are left alone. Needs
+            "Let the agent update add-ons" in the Thunderbird add-on's options.
+            Updating MCP Bridge for Thunderbird restarts it: it reconnects within
+            about 30 seconds.
+
+            Args:
+                path: Absolute path of the .xpi file on this computer
+            """
+            path = os.path.abspath(os.path.expanduser(path))
+            if not path.lower().endswith(".xpi") or not os.path.isfile(path):
+                raise ToolError(f"{path} is not an .xpi file")
+            data = await self._thunderbird_request(
+                {"action": "thunderbird.updateAddon", "data": {"path": path}}, "update the add-on")
+            done = f'Updated {data.get("name")} ({data.get("id")}) from {data.get("from")} to {data.get("to")}'
+            return done + (". It is restarting and reconnects shortly." if data.get("restarting") else "")
+
+        @self._tool()
         async def thunderbird_capture_window(
             filename: Optional[str] = None,
             scale: float = 1.0

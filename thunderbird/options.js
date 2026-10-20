@@ -12,9 +12,11 @@ async function showStatus() {
 }
 
 (async () => {
-  const stored = await browser.storage.local.get({ browserName: '', pairingToken: '', allowInput: false });
+  const stored = await browser.storage.local.get({ browserName: '', pairingToken: '', allowInput: false,
+    allowAddonUpdates: false });
   $('name').value = stored.browserName;
   $('allowInput').checked = stored.allowInput;
+  $('allowAddonUpdates').checked = stored.allowAddonUpdates;
   $('token').value = stored.pairingToken;
   showStatus();
   setInterval(showStatus, 2000);
@@ -22,7 +24,7 @@ async function showStatus() {
 
 $('save').addEventListener('click', async () => {
   await browser.storage.local.set({ browserName: $('name').value.trim(), pairingToken: $('token').value.trim(),
-    allowInput: $('allowInput').checked });
+    allowInput: $('allowInput').checked, allowAddonUpdates: $('allowAddonUpdates').checked });
   $('saved').textContent = 'Saved';
   setTimeout(() => { $('saved').textContent = ''; }, 2000);
 });

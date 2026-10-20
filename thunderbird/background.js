@@ -127,6 +127,14 @@ async function handleMessage(socket, message) {
           ref: data.ref || undefined, text: data.text || undefined, doubleClick: !!data.doubleClick,
           rightClick: !!data.rightClick, status: data.status || undefined }));
         break;
+      case 'thunderbird.updateAddon': {
+        const { allowAddonUpdates } = await browser.storage.local.get({ allowAddonUpdates: false });
+        if (!allowAddonUpdates) {
+          throw new Error("Updating add-ons is off. Turn on \"Let the agent update add-ons\" in MCP Bridge for Thunderbird's options.");
+        }
+        reply(socket, id, action, await browser.mcpChrome.updateAddon(data.path));
+        break;
+      }
       case 'mail.listAccounts':
         reply(socket, id, action, await listAccounts());
         break;
