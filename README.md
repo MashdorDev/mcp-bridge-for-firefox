@@ -31,6 +31,14 @@ server; `browsers_list` shows them and `browsers_select` picks the one the agent
 works in. Set each profile's name on the add-on's options page. Details:
 [docs/configuration.md](docs/configuration.md#several-firefox-profiles).
 
+## Thunderbird
+
+A separate add-on in [`thunderbird/`](thunderbird/) connects Thunderbird to the
+same server, as one more entry in `browsers_list`. It can capture the whole
+Thunderbird window and read mail (accounts, folders, search, one message with its
+headers and body), read-only. It pairs with the server through a shared token
+before answering anything. Setup: [docs/thunderbird.md](docs/thunderbird.md).
+
 ## Install
 
 ### 1. The add-on
@@ -103,6 +111,7 @@ Use it with AI clients you trust, and consider a separate Firefox profile for ag
 
 - [Tools reference](docs/api-reference.md)
 - [Configuration](docs/configuration.md)
+- [Thunderbird](docs/thunderbird.md)
 - [Protocol between server and add-on](docs/protocol.md)
 - [Architecture](docs/architecture.md)
 - [Security model](SECURITY.md)

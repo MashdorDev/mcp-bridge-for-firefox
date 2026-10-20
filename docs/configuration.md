@@ -255,7 +255,9 @@ token, so treat them as proportions rather than exact counts:
 | `bookmarks` | list, search, create, create_folder, update, delete | 703 |
 | `navigation` | back, forward, reload, go_to_url | 546 |
 | `history` | query, get_recent, delete_item | 304 |
+| `mail` | list_accounts, list_folders, list_messages, search_messages, get_message (Thunderbird) | 731 |
 | `browsers` | list, select | 196 |
+| `thunderbird` | capture_window (Thunderbird) | 170 |
 | `debug` | websocket_status | 78 |
 
 All groups are on by default. An unrecognized group name is an error rather than

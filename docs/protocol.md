@@ -1,13 +1,56 @@
 # WebSocket Message Protocol
 
-## Connection Constraints
+## Connections
 
-**IMPORTANT: Only one extension connection is allowed at a time.**
+Each browser (a Firefox profile or Thunderbird running its add-on) holds one
+WebSocket connection to each server it finds on port 8765 and the four ports
+after it. A server keeps a connection per browser, keyed by the `instance_id`
+the browser sends in its hello; a browser that reconnects replaces its own old
+connection. Requests go to the browser chosen with `browsers_select`.
 
-- The FoxMCP server accepts only one active WebSocket connection from a browser extension
-- If a new connection arrives, the existing connection is automatically closed
-- The extension disconnects any existing connection before creating a new one
-- This prevents connection races, resource conflicts, and multiple extension instances
+### Hello
+
+The first message on every connection names the browser:
+
+```json
+{
+  "id": "hello_1792470000000",
+  "type": "hello",
+  "action": "browser.hello",
+  "data": {
+    "instance_id": "9f67d67a-...",
+    "name": "Work",
+    "version": "1.12.0",
+    "app": "firefox",
+    "real_input": true,
+    "real_input_port": 0,
+    "client_nonce": "3b1f..."
+  }
+}
+```
+
+`app` is `firefox` (the default when it is missing) or `thunderbird`. The server
+refuses a tool before sending anything when the active browser is the wrong app
+for it: `thunderbird` and `mail` tools need Thunderbird, every other group except
+`browsers` and `debug` needs Firefox.
+
+### Pairing
+
+`client_nonce` is present only when the add-on pairs: always for Thunderbird,
+and for Firefox when a token is set in its options. The server keeps the token in
+`~/.foxmcp/pairing-token` (created on first start) and answers:
+
+```json
+{"type": "hello_ack", "action": "browser.hello_ack",
+ "data": {"server_nonce": "a91c...", "proof": "HMAC-SHA256(token, \"server|\" + client_nonce)"}}
+```
+
+The add-on checks `proof`, then sends
+`{"type": "auth", "data": {"proof": "HMAC-SHA256(token, \"client|\" + server_nonce)"}}`.
+The token never crosses the socket, and a server nonce is good for one `auth`.
+A pairing add-on answers nothing but `ping` until the server has proved the
+token, with error code `NOT_PAIRED`; the server refuses Thunderbird tools until
+the add-on has proved it, and `browsers_list` marks paired browsers.
 
 ## Message Structure
 
@@ -1661,3 +1704,18 @@ Example test workflows:
 2. Use `history.query` or `history.recent` to verify the visited URLs appear
 3. Validate history item structure and timestamps
 4. Use `test.clear_test_history` to clean up test data
+## Thunderbird actions
+
+Answered only by the Thunderbird add-on (`thunderbird/`). Mail actions are read-only.
+
+| Action | Data | Response data |
+|---|---|---|
+| `thunderbird.captureWindow` | `scale` (0.25 to 1) | `dataUrl` (PNG), `width`, `height` |
+| `mail.listAccounts` | none | `accounts`: `id`, `name`, `type`, `identities` |
+| `mail.listFolders` | `accountId` (optional) | `folders`: `id`, `accountId`, `path`, `name`, `specialUse`, `unread`, `total` |
+| `mail.listMessages` | `folderId`, `sinceDays`, `unreadOnly`, `limit` | `total`, `messages` (newest first) |
+| `mail.search` | `text`, `author`, `subject`, `folderId`, `sinceDays`, `unreadOnly`, `limit` | `total`, `messages` |
+| `mail.getMessage` | `messageId`, `headersOnly`, `maxBodyChars` | message summary plus `headers`, `attachments`, `body`, `bodyTruncated` |
+
+A message summary is `id`, `date`, `author`, `subject`, `read`, `flagged`, `tags`,
+`folder` and `accountId`. Message ids are Thunderbird's and last for its session.
