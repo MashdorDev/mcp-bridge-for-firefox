@@ -72,6 +72,18 @@
         ]
       },
       {
+        "name": "consoleMessages",
+        "type": "function",
+        "async": true,
+        "description": "Recent console errors, warnings and add-on console.log output",
+        "parameters": [
+          { "name": "sinceMs", "type": "integer", "minimum": 1000 },
+          { "name": "contains", "type": "string" },
+          { "name": "errorsOnly", "type": "boolean" },
+          { "name": "limit", "type": "integer", "minimum": 1, "maximum": 500 }
+        ]
+      },
+      {
         "name": "updateAddon",
         "type": "function",
         "async": true,
