@@ -109,6 +109,9 @@ async function handleMessage(socket, message) {
       case 'thunderbird.captureWindow':
         reply(socket, id, action, await browser.mcpChrome.captureWindow(data.scale || 1));
         break;
+      case 'thunderbird.snapshot':
+        reply(socket, id, action, await browser.mcpChrome.snapshot(data.maxElements || 200));
+        break;
       case 'mail.listAccounts':
         reply(socket, id, action, await listAccounts());
         break;

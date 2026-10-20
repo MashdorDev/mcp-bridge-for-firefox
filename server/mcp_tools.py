@@ -1335,14 +1335,36 @@ class FoxMCPTools:
             return self._screenshot_result(
                 data.get("dataUrl", ""), "png", filename, f"Thunderbird window, {data.get('width')}x{data.get('height')}")
 
-    async def _mail_request(self, request: dict) -> dict:
-        """Send a mail.* request; the add-on's data, or ToolError with its reason"""
+        @self._tool()
+        async def thunderbird_snapshot(max_elements: int = 200) -> str:
+            """List the buttons, folders, message rows and fields shown in
+            Thunderbird's main window, each with a ref that thunderbird_click takes
+
+            Covers the toolbar, the folder pane, the message list and the open
+            message. Add-on tabs (such as Smart Inbox) are not reachable this way;
+            use thunderbird_capture_window to see them.
+
+            Args:
+                max_elements: Stop listing after this many (default: 200)
+            """
+            data = await self._thunderbird_request(
+                {"action": "thunderbird.snapshot", "data": {"maxElements": min(max(max_elements, 1), 1000)}},
+                "snapshot Thunderbird")
+            elements = data.get("elements", [])
+            lines = [f'{e["ref"]} {e["role"]} "{e["label"]}" at {e["x"]},{e["y"]}' for e in elements]
+            more = f" (first {len(elements)} of {data.get('total')})" if data.get("total", 0) > len(elements) else ""
+            skipped = (f"\n{data['skipped']} elements could not be measured: {data.get('skipReason')}"
+                       if data.get("skipped") else "")
+            return f"Thunderbird elements{more}:\n" + "\n".join(lines) + skipped
+
+    async def _thunderbird_request(self, request: dict, doing: str = "read mail") -> dict:
+        """Send a request to the Thunderbird add-on; its data, or ToolError with its reason"""
         response = await self.websocket_server.send_request_and_wait(
             {**request, "id": str(uuid.uuid4()), "type": "request", "timestamp": datetime.now().isoformat()})
         if "error" in response:
-            raise ToolError(f"Error reading mail: {response['error']}")
+            raise ToolError(f"Error trying to {doing}: {response['error']}")
         if response.get("type") == "error":
-            raise ToolError(f"Failed to read mail: {response.get('data', {}).get('message', 'Unknown error')}")
+            raise ToolError(f"Failed to {doing}: {response.get('data', {}).get('message', 'Unknown error')}")
         return response.get("data", {})
 
     @staticmethod
@@ -1360,7 +1382,7 @@ class FoxMCPTools:
         @self._tool()
         async def mail_list_accounts() -> str:
             """List Thunderbird's mail accounts with their ids and addresses"""
-            data = await self._mail_request({"action": "mail.listAccounts", "data": {}})
+            data = await self._thunderbird_request({"action": "mail.listAccounts", "data": {}})
             lines = [f"- {a['name']} ({a['type']}): id {a['id']}, {', '.join(a.get('identities') or []) or 'no identity'}"
                      for a in data.get("accounts", [])]
             return f"Accounts ({len(lines)}):\n" + "\n".join(lines)
@@ -1372,7 +1394,7 @@ class FoxMCPTools:
             Args:
                 account_id: Only this account's folders (from mail_list_accounts)
             """
-            data = await self._mail_request(
+            data = await self._thunderbird_request(
                 {"action": "mail.listFolders", "data": {"accountId": account_id} if account_id else {}})
             lines = []
             for f in data.get("folders", []):
@@ -1398,7 +1420,7 @@ class FoxMCPTools:
                 unread_only: Only unread messages (default: false)
                 limit: How many to show, up to 200 (default: 25)
             """
-            data = await self._mail_request({"action": "mail.listMessages", "data": {
+            data = await self._thunderbird_request({"action": "mail.listMessages", "data": {
                 "folderId": folder_id, "sinceDays": max(since_days, 1), "unreadOnly": unread_only,
                 "limit": min(max(limit, 1), 200)}})
             messages = data.get("messages", [])
@@ -1430,7 +1452,7 @@ class FoxMCPTools:
             """
             if not (text or author or subject):
                 raise ToolError("Give text, author or subject to search for")
-            data = await self._mail_request({"action": "mail.search", "data": {
+            data = await self._thunderbird_request({"action": "mail.search", "data": {
                 "text": text, "author": author, "subject": subject, "folderId": folder_id,
                 "sinceDays": max(since_days, 1), "unreadOnly": unread_only, "limit": min(max(limit, 1), 200)}})
             messages = data.get("messages", [])
@@ -1447,7 +1469,7 @@ class FoxMCPTools:
                 headers_only: Leave the body out (default: false)
                 max_body_chars: Cut the body after this many characters (default: 20000)
             """
-            m = await self._mail_request({"action": "mail.getMessage", "data": {
+            m = await self._thunderbird_request({"action": "mail.getMessage", "data": {
                 "messageId": message_id, "headersOnly": headers_only, "maxBodyChars": max(max_body_chars, 0)}})
             lines = [f"Message {m.get('id')} in {m.get('accountId')} {m.get('folder')}",
                      f"Subject: {m.get('subject')}", f"From: {m.get('author')}", f"Date: {m.get('date')}",
