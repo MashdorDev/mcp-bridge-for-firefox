@@ -1,0 +1,17 @@
+[
+  {
+    "namespace": "mcpChrome",
+    "description": "Fixed, named operations on Thunderbird's own windows. There is deliberately no way to run arbitrary code.",
+    "functions": [
+      {
+        "name": "captureWindow",
+        "type": "function",
+        "async": true,
+        "description": "PNG of the main window as a data URL, with its size",
+        "parameters": [
+          { "name": "scale", "type": "number", "minimum": 0.25, "maximum": 1 }
+        ]
+      }
+    ]
+  }
+]

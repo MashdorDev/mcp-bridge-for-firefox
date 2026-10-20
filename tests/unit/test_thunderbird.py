@@ -1,11 +1,43 @@
 """
-Tests for Thunderbird as a connected browser: the app it reports in hello
+Tests for Thunderbird as a connected browser: the app it reports in hello, and
+the thunderbird_capture_window tool
+
+The Thunderbird add-on itself is checked by hand against a real Thunderbird;
+these stub the socket and the server.
 """
 
+import base64
 from unittest.mock import Mock
 
+import pytest
+
 import test_imports  # Automatic path setup
-from server.server import FoxMCPServer
+from fastmcp.exceptions import ToolError
+from fastmcp.utilities.types import Image
+from server.mcp_tools import FoxMCPTools
+from server.server import BrowserConnection, FoxMCPServer
+
+PNG = "data:image/png;base64," + base64.b64encode(b"\x89PNG fake").decode()
+
+
+class StubServer:
+    def __init__(self, app):
+        self.browsers = {"tb": BrowserConnection(key="tb", websocket=None, name="Mail", app=app)}
+        self.active_browser = "tb"
+        self.sent_request = None
+        self.response = {"type": "response", "data": {"dataUrl": PNG, "width": 800, "height": 600}}
+
+    async def send_request_and_wait(self, request):
+        self.sent_request = request
+        return self.response
+
+
+async def capture(server, **kwargs):
+    tool = await FoxMCPTools(server).mcp.get_tool("thunderbird_capture_window")
+    try:
+        return await tool.fn(**kwargs)
+    except ToolError as error:
+        return str(error)
 
 
 def test_hello_records_thunderbird_and_names_it():
@@ -27,3 +59,30 @@ def test_hello_without_app_is_firefox():
 
     assert server.browsers["abcd1234"].app == "firefox"
     assert server.browsers["abcd1234"].name == "Work"
+
+
+@pytest.mark.asyncio
+async def test_capture_returns_the_image():
+    server = StubServer("thunderbird")
+    result = await capture(server, scale=0.5)
+
+    assert server.sent_request["action"] == "thunderbird.captureWindow"
+    assert server.sent_request["data"] == {"scale": 0.5}
+    assert isinstance(result, Image)
+
+
+@pytest.mark.asyncio
+async def test_capture_is_refused_on_firefox_without_asking_it():
+    server = StubServer("firefox")
+    result = await capture(server)
+
+    assert server.sent_request is None
+    assert "browsers_select your Thunderbird" in result
+
+
+@pytest.mark.asyncio
+async def test_capture_reports_the_add_on_error():
+    server = StubServer("thunderbird")
+    server.response = {"type": "error", "data": {"message": "No Thunderbird main window is open"}}
+
+    assert "No Thunderbird main window is open" in await capture(server)
