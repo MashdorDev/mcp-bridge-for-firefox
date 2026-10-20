@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font: 14px system-ui, sans-serif; margin: 16px; max-width: 520px; }
+    label { display: block; margin: 12px 0 4px; font-weight: 600; }
+    input { width: 100%; box-sizing: border-box; padding: 6px; font: inherit; }
+    p { color: GrayText; margin: 4px 0; }
+    #status li.paired { color: green; }
+  </style>
+</head>
+<body>
+  <label for="name">Name</label>
+  <input id="name" placeholder="Thunderbird">
+  <p>How this Thunderbird is shown in browsers_list.</p>
+
+  <label for="token">Pairing token</label>
+  <input id="token" type="password" autocomplete="off" spellcheck="false">
+  <p>Leave empty: Thunderbird reads it from <code>~/.foxmcp/pairing-token</code>, which the MCP Bridge server creates. Set it only if the server keeps its token elsewhere.</p>
+
+  <p><button id="save" type="button">Save</button> <span id="saved"></span></p>
+  <ul id="status"></ul>
+  <script src="options.js"></script>
+</body>
+</html>

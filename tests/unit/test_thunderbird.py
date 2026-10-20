@@ -22,7 +22,7 @@ PNG = "data:image/png;base64," + base64.b64encode(b"\x89PNG fake").decode()
 
 class StubServer:
     def __init__(self, app):
-        self.browsers = {"tb": BrowserConnection(key="tb", websocket=None, name="Mail", app=app)}
+        self.browsers = {"tb": BrowserConnection(key="tb", websocket=None, name="Mail", app=app, paired=True)}
         self.active_browser = "tb"
         self.sent_request = None
         self.response = {"type": "response", "data": {"dataUrl": PNG, "width": 800, "height": 600}}
@@ -107,3 +107,13 @@ async def test_capture_reports_the_add_on_error():
     server.response = {"type": "error", "data": {"message": "No Thunderbird main window is open"}}
 
     assert "No Thunderbird main window is open" in await capture(server)
+
+
+@pytest.mark.asyncio
+async def test_capture_is_refused_until_thunderbird_is_paired():
+    server = StubServer("thunderbird")
+    server.browsers["tb"].paired = False
+    result = await capture(server)
+
+    assert server.sent_request is None
+    assert "not paired" in result

@@ -43,11 +43,65 @@ const reply = (socket, id, action, data) => send(socket, { id, type: 'response',
 const fail = (socket, id, code, message) =>
   send(socket, { id, type: 'error', action: '', data: { code, message, details: {} } });
 
+// Pairing: this add-on reaches mail, so it answers only a server that proves
+// it holds the token from ~/.foxmcp/pairing-token (pairing_proof in server.py).
+const pairing = new WeakMap(); // socket -> { nonce, paired, problem }
+
+const hex = (bytes) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+async function proof(token, role, nonce) {
+  const encode = (text) => new TextEncoder().encode(text);
+  const key = await crypto.subtle.importKey('raw', encode(token), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return hex(await crypto.subtle.sign('HMAC', key, encode(`${role}|${nonce}`)));
+}
+
+async function sayHello(socket) {
+  const nonce = hex(crypto.getRandomValues(new Uint8Array(16)));
+  pairing.set(socket, { nonce, paired: false, problem: 'waiting for the server to prove the pairing token' });
+  send(socket, { id: `hello_${Date.now()}`, type: 'hello', action: 'browser.hello',
+    data: { ...(await identity()), client_nonce: nonce } });
+}
+
+// The token typed into the options wins; otherwise the server's own file,
+// which is on this machine whenever the server is
+async function pairingToken() {
+  const { pairingToken: typed } = await browser.storage.local.get({ pairingToken: '' });
+  return typed.trim() || (await browser.mcpChrome.readPairingToken()) || '';
+}
+
+async function handleHelloAck(socket, data) {
+  const state = pairing.get(socket);
+  if (!state) return;
+  const token = await pairingToken().catch((error) => {
+    state.problem = error.message;
+    return null;
+  });
+  if (token === null) return;
+  if (!token) {
+    state.problem = 'no pairing token found in ~/.foxmcp/pairing-token or the options';
+  } else if (!data.proof) {
+    state.problem = 'the server has no pairing token; update the MCP Bridge server';
+  } else if (data.proof !== await proof(token, 'server', state.nonce)) {
+    state.problem = 'the server proved a different pairing token, so Thunderbird does not answer it';
+  } else {
+    state.paired = true;
+    state.problem = '';
+    send(socket, { id: `auth_${Date.now()}`, type: 'auth', action: 'browser.auth',
+      data: { proof: await proof(token, 'client', data.server_nonce) } });
+  }
+}
+
 async function handleMessage(socket, message) {
   const { id, type, action, data = {} } = message;
+  if (type === 'hello_ack') return handleHelloAck(socket, data);
   if (type !== 'request') return;
   if (action === 'ping') {
     reply(socket, id, 'ping', { message: 'pong', timestamp: new Date().toISOString() });
+    return;
+  }
+  const state = pairing.get(socket);
+  if (!state?.paired) {
+    fail(socket, id, 'NOT_PAIRED', `Thunderbird is not paired: ${state?.problem || 'no hello yet'}.`);
     return;
   }
   try {
@@ -77,7 +131,7 @@ function connect(port) {
     sockets.set(port, socket);
     socket.onopen = async () => {
       if (port === PORT) mainRetries = 0;
-      send(socket, { id: `hello_${Date.now()}`, type: 'hello', action: 'browser.hello', data: await identity() });
+      await sayHello(socket);
       settled(true);
     };
     socket.onmessage = (event) => handleMessage(socket, JSON.parse(event.data));
@@ -110,12 +164,18 @@ async function scanExtraPorts() {
   }
 }
 
-browser.storage.onChanged.addListener(async (changes, area) => {
-  if (area !== 'local' || !changes.browserName) return;
-  const data = await identity();
-  for (const socket of sockets.values()) {
-    send(socket, { id: `hello_${Date.now()}`, type: 'hello', action: 'browser.hello', data });
-  }
+// A new name or token reaches every server, and pairing starts over
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !(changes.browserName || changes.pairingToken)) return;
+  for (const socket of sockets.values()) sayHello(socket);
+});
+
+// The options page shows whether each server is paired
+browser.runtime.onMessage.addListener((message) => {
+  if (message !== 'pairingStatus') return undefined;
+  return Promise.resolve([...sockets].map(([port, socket]) => ({
+    port, open: socket.readyState === WebSocket.OPEN, ...(pairing.get(socket) || {}), nonce: undefined,
+  })));
 });
 
 connect(PORT); // a failed connection's onclose schedules the next try

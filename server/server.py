@@ -8,9 +8,12 @@ Licensed under the MIT License - see LICENSE file for details
 
 import argparse
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import re
+import secrets
 import socket
 import sys
 import os
@@ -91,6 +94,32 @@ def find_available_port(start_port=3000, max_attempts=100):
 # connects to every server on these ports, so each session gets its own.
 EXTRA_SERVER_PORTS = 4
 
+# A secret shared with each add-on, so neither side has to trust whoever holds
+# the port: any local process can listen on 8765 first, or claim to be the
+# add-on. Both prove they know it with an HMAC over the other's nonce, and the
+# secret itself never goes over the socket. Every server on this machine reads
+# the same file, so one pairing covers them all.
+PAIRING_TOKEN_FILE = os.path.join(os.path.expanduser('~'), '.foxmcp', 'pairing-token')
+
+
+def pairing_proof(token: str, role: str, nonce: str) -> str:
+    """What `role` ('server' or 'client') sends to prove it holds the token"""
+    return hmac.new(token.encode(), f"{role}|{nonce}".encode(), hashlib.sha256).hexdigest()
+
+
+def ensure_pairing_token(path: str = PAIRING_TOKEN_FILE) -> str:
+    """The token in `path`, created on first use, readable only by this user"""
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
+            f.write(secrets.token_hex(16))
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass  # Windows: the profile folder is already private to the user
+    with open(path) as f:
+        return f.read().strip()
+
 
 def port_is_free(port: int) -> bool:
     """Whether no other process is listening on the port, on IPv4 or IPv6 localhost
@@ -122,6 +151,10 @@ class BrowserConnection:
     # 'firefox', or 'thunderbird' for the Thunderbird add-on, which answers a
     # different set of actions
     app: str = 'firefox'
+    # Whether the add-on proved it holds the pairing token, and the nonce it
+    # was asked to sign
+    paired: bool = False
+    server_nonce: str = ''
     connected_at: float = field(default_factory=time.time)
     # Real input through WebDriver BiDi: whether the person allows it, the port
     # they set (0: find it), and the port it was last found on
@@ -153,9 +186,11 @@ class FoxMCPServer:
     MONITOR_LIFECYCLE_ACTIONS = ("requests.start_monitoring", "requests.stop_monitoring")
 
     def __init__(self, host: str = "localhost", port: int = 8765, mcp_port: int = None, start_mcp: bool = True,
-                 disabled_tool_groups=None, enabled_tools=None, use_stdio: bool = False):
+                 disabled_tool_groups=None, enabled_tools=None, use_stdio: bool = False,
+                 pairing_token: Optional[str] = None):
         self.host = host
         self.port = port
+        self.pairing_token = pairing_token
         self.use_stdio = use_stdio
 
         # In stdio mode the MCP side has no listener, so there is no port to pick.
@@ -401,6 +436,36 @@ class FoxMCPServer:
             self.active_browser_name = browser.name
         logger.info(f"Browser {browser.name} ({instance_id[:8]}) said hello, add-on {browser.version}")
 
+    def _answer_pairing(self, websocket, data: Dict[str, Any]):
+        """Prove the token to an add-on that sent a nonce, and ask it to prove it back
+
+        An add-on that sends no nonce does not pair (a Firefox add-on without a
+        token set) and is left as it was. Each hello starts over, unpaired.
+        """
+        nonce = str(data.get('client_nonce') or '')
+        browser = self._browser_for_socket(websocket)
+        if not nonce or browser is None:
+            return
+        browser.paired = False
+        ack = {'proof': None}
+        if self.pairing_token:
+            browser.server_nonce = secrets.token_hex(16)
+            ack = {'server_nonce': browser.server_nonce,
+                   'proof': pairing_proof(self.pairing_token, 'server', nonce)}
+        asyncio.create_task(websocket.send(json.dumps({
+            'id': f'hello_ack_{int(time.time() * 1000)}', 'type': 'hello_ack', 'action': 'browser.hello_ack',
+            'data': ack, 'timestamp': datetime.now().isoformat()})))
+
+    def _handle_auth(self, websocket, data: Dict[str, Any]):
+        """Mark a browser paired when its proof matches the nonce it was sent"""
+        browser = self._browser_for_socket(websocket)
+        if browser is None or not self.pairing_token or not browser.server_nonce:
+            return
+        expected = pairing_proof(self.pairing_token, 'client', browser.server_nonce)
+        browser.paired = hmac.compare_digest(str(data.get('proof') or ''), expected)
+        browser.server_nonce = ''  # one use
+        logger.info(f"Browser {browser.name} {'paired' if browser.paired else 'failed to pair: wrong token'}")
+
     def select_browser(self, query: str) -> BrowserConnection:
         """Make a browser active by its name or the start of its id"""
         wanted = query.strip().lower()
@@ -449,6 +514,10 @@ class FoxMCPServer:
             message_type = data.get('type', 'unknown')
             if message_type == 'hello':
                 self._handle_hello(websocket, data.get('data') or {})
+                self._answer_pairing(websocket, data.get('data') or {})
+                return
+            if message_type == 'auth':
+                self._handle_auth(websocket, data.get('data') or {})
                 return
             message_id = data.get('id')
             action = data.get('action', 'unknown')
@@ -1361,8 +1430,10 @@ async def main():
             start_mcp=not args.no_mcp,
             disabled_tool_groups=disabled_tool_groups,
             enabled_tools=enabled_tools,
-            use_stdio=args.stdio
+            use_stdio=args.stdio,
+            pairing_token=ensure_pairing_token()
         )
+        logger.info(f"Pairing token for the add-ons' options: {PAIRING_TOKEN_FILE}")
     except ValueError as e:
         parser.error(str(e))
     await server.start_server()

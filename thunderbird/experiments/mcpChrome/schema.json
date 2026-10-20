@@ -11,6 +11,13 @@
         "parameters": [
           { "name": "scale", "type": "number", "minimum": 0.25, "maximum": 1 }
         ]
+      },
+      {
+        "name": "readPairingToken",
+        "type": "function",
+        "async": true,
+        "description": "The token the MCP Bridge server keeps in ~/.foxmcp/pairing-token, or null when the file does not exist",
+        "parameters": []
       }
     ]
   }

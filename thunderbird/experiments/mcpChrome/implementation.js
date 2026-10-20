@@ -26,6 +26,18 @@ var mcpChrome = class extends ExtensionAPI {
           bitmap.close();
           return { dataUrl: canvas.toDataURL("image/png"), width: canvas.width, height: canvas.height };
         },
+
+        // Pairs without copying the token by hand. Only this one file, at a
+        // fixed path (PAIRING_TOKEN_FILE in server.py), is ever read.
+        async readPairingToken() {
+          const path = PathUtils.join(Services.dirsvc.get("Home", Ci.nsIFile).path, ".foxmcp", "pairing-token");
+          try {
+            return (await IOUtils.readUTF8(path)).trim();
+          } catch (error) {
+            if (DOMException.isInstance(error) && error.name === "NotFoundError") return null;
+            throw new ExtensionError(`Could not read ${path}: ${error.message}`);
+          }
+        },
       },
     };
   }
