@@ -83,3 +83,47 @@ async def test_mail_tools_need_a_paired_thunderbird():
 
     assert "not paired" in await call(server, "mail_list_accounts")
     assert server.sent_request is None
+
+
+@pytest.mark.asyncio
+async def test_search_needs_something_to_search_for():
+    server = StubServer()
+
+    assert "Give text, author or subject" in await call(server, "mail_search_messages")
+    assert server.sent_request is None
+
+
+@pytest.mark.asyncio
+async def test_search_sends_every_criterion():
+    server = StubServer({"total": 0, "messages": []})
+    await call(server, "mail_search_messages", author="chris", subject="Sync", folder_id="f1", unread_only=True)
+
+    assert server.sent_request["action"] == "mail.search"
+    assert server.sent_request["data"] == {"text": None, "author": "chris", "subject": "Sync", "folderId": "f1",
+                                           "sinceDays": 90, "unreadOnly": True, "limit": 25}
+
+
+@pytest.mark.asyncio
+async def test_a_message_reads_with_headers_attachments_and_body():
+    server = StubServer({
+        "id": 7, "accountId": "account1", "folder": "/INBOX", "subject": "Sync", "author": "Chris",
+        "date": "2026-10-19T15:00:00.000Z", "read": True, "flagged": False, "tags": [],
+        "headers": {"list-unsubscribe": ["<mailto:u@example.org>"], "received": ["a", "b"]},
+        "attachments": [{"name": "notes.pdf", "contentType": "application/pdf", "size": 1200}],
+        "body": "Hello", "bodyTruncated": True,
+    })
+    result = await call(server, "mail_get_message", message_id=7)
+
+    assert server.sent_request["data"] == {"messageId": 7, "headersOnly": False, "maxBodyChars": 20000}
+    assert "  list-unsubscribe: <mailto:u@example.org>" in result
+    assert "  received: a\n  received: b" in result
+    assert "  notes.pdf (application/pdf, 1200 bytes)" in result
+    assert "Body (cut short; raise max_body_chars for more):\nHello" in result
+
+
+@pytest.mark.asyncio
+async def test_headers_only_leaves_the_body_out():
+    server = StubServer({"id": 7, "headers": {}, "attachments": []})
+    result = await call(server, "mail_get_message", message_id=7, headers_only=True)
+
+    assert "Body" not in result

@@ -118,6 +118,12 @@ async function handleMessage(socket, message) {
       case 'mail.listMessages':
         reply(socket, id, action, await listMessages(data));
         break;
+      case 'mail.search':
+        reply(socket, id, action, await searchMessages(data));
+        break;
+      case 'mail.getMessage':
+        reply(socket, id, action, await getMessage(data));
+        break;
       default:
         fail(socket, id, 'UNKNOWN_ACTION',
           `${action} is not available in Thunderbird. browsers_select a Firefox browser for it.`);

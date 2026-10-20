@@ -48,3 +48,46 @@ async function listMessages({ folderId, sinceDays = 30, unreadOnly = false, limi
   if (unreadOnly) queryInfo.unread = true;
   return queryMessages(queryInfo, limit);
 }
+
+async function searchMessages({ text, author, subject, folderId, sinceDays = 90, unreadOnly = false, limit = 25 }) {
+  const queryInfo = { fromDate: new Date(Date.now() - sinceDays * 86400000) };
+  if (text) queryInfo.fullText = text;
+  if (author) queryInfo.author = author;
+  if (subject) queryInfo.subject = subject;
+  if (folderId) queryInfo.folderId = folderId;
+  if (unreadOnly) queryInfo.unread = true;
+  return queryMessages(queryInfo, limit);
+}
+
+// Plain text when the message has it, otherwise its HTML with the tags taken out
+function bodyText(part) {
+  const texts = { plain: [], html: [] };
+  (function walk(p) {
+    if (p.body && !/attachment/i.test(p.headers?.['content-disposition']?.[0] || '')) {
+      if (p.contentType === 'text/plain') texts.plain.push(p.body);
+      else if (p.contentType === 'text/html') texts.html.push(p.body);
+    }
+    (p.parts || []).forEach(walk);
+  })(part);
+  if (texts.plain.length) return texts.plain.join('\n\n');
+  return texts.html.join('\n\n').replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
+}
+
+async function getMessage({ messageId, headersOnly = false, maxBodyChars = 20000 }) {
+  const message = await browser.messages.get(messageId);
+  if (!message) throw new Error(`No message with id ${messageId}`);
+  const full = await browser.messages.getFull(messageId);
+  const attachments = await browser.messages.listAttachments(messageId).catch(() => []);
+  const result = {
+    ...summary(message),
+    headers: full.headers,
+    attachments: attachments.map((a) => ({ name: a.name, contentType: a.contentType, size: a.size })),
+  };
+  if (!headersOnly) {
+    const body = bodyText(full);
+    result.body = body.slice(0, maxBodyChars);
+    result.bodyTruncated = body.length > maxBodyChars;
+  }
+  return result;
+}
