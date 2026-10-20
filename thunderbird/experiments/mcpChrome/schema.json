@@ -41,6 +41,37 @@
         ]
       },
       {
+        "name": "type",
+        "type": "function",
+        "async": true,
+        "description": "Type into a field, optionally clearing it first and pressing Enter after",
+        "parameters": [
+          {
+            "name": "target",
+            "type": "object",
+            "properties": {
+              "ref": { "type": "string", "optional": true },
+              "text": { "type": "string", "optional": true },
+              "value": { "type": "string" },
+              "clear": { "type": "boolean", "optional": true },
+              "submit": { "type": "boolean", "optional": true },
+              "status": { "type": "string", "optional": true }
+            }
+          }
+        ]
+      },
+      {
+        "name": "pressKey",
+        "type": "function",
+        "async": true,
+        "description": "Press an allowed key on whatever has focus",
+        "parameters": [
+          { "name": "key", "type": "string" },
+          { "name": "shift", "type": "boolean" },
+          { "name": "status", "type": "string" }
+        ]
+      },
+      {
         "name": "updateAddon",
         "type": "function",
         "async": true,

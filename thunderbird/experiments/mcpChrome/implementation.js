@@ -62,8 +62,14 @@ function onTop(el) {
   let [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
   let node = el;
   for (;;) {
-    const hit = node.ownerDocument.elementFromPoint(x, y);
+    // A shadow root answers for its own tree; the document only sees the host
+    const root = node.getRootNode();
+    const hit = root.elementFromPoint(x, y);
     if (!hit || !(hit === node || node.contains(hit))) return false;
+    if (root.host) {
+      node = root.host;
+      continue;
+    }
     const frame = node.ownerDocument.defaultView.browsingContext.embedderElement;
     if (!frame) return true;
     const f = frame.getBoundingClientRect();
@@ -89,9 +95,20 @@ function labelOf(el) {
 // measuring would otherwise just look like an empty window
 let measureErrors = { count: 0, first: "" };
 
+// Thunderbird's own components (the search bar among them) keep their
+// controls in shadow trees, which querySelectorAll does not enter
+function interactiveIn(root) {
+  const found = [...root.querySelectorAll(INTERACTIVE)];
+  for (const el of root.querySelectorAll("*")) {
+    const shadow = el.openOrClosedShadowRoot;
+    if (shadow) found.push(...interactiveIn(shadow));
+  }
+  return found;
+}
+
 function shownElements(win) {
   measureErrors = { count: 0, first: "" };
-  return documents(win).flatMap((doc) => [...doc.querySelectorAll(INTERACTIVE)]).filter((el) => {
+  return documents(win).flatMap(interactiveIn).filter((el) => {
     try {
       return isShown(el, win) && labelOf(el);
     } catch (error) {
@@ -181,6 +198,36 @@ function ripple(win, rect) {
   Object.assign(o.ring.style, { left: `${rect.x + rect.width / 2}px`, top: `${rect.y + rect.height / 2}px` });
   o.ring.animate([{ transform: "scale(.4)", opacity: 1 }, { transform: "scale(1.6)", opacity: 0 }], { duration: 450 });
   o.hideTimer = win.setTimeout(() => hide(win), AGENT_IDLE_MS);
+}
+
+// Keys the agent may press. Delete and Backspace are left out on purpose: in
+// the message list they move mail to the trash.
+const KEY_CODES = { Enter: 13, Escape: 27, Tab: 9, " ": 32, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37,
+  ArrowRight: 39, PageUp: 33, PageDown: 34, Home: 36, End: 35 };
+
+// The focused element, followed into shadow trees and into the frames
+// (about:3pane, about:message) the mail view is made of
+function focusedElement(win) {
+  let el = win.document.activeElement;
+  for (;;) {
+    const inner = el?.openOrClosedShadowRoot?.activeElement || el?.contentDocument?.activeElement;
+    if (!inner || inner === el) return el;
+    el = inner;
+  }
+}
+
+function pressOn(el, key, shift) {
+  const view = el.ownerDocument.defaultView;
+  const init = { key, code: key === " " ? "Space" : key, keyCode: KEY_CODES[key], which: KEY_CODES[key],
+    shiftKey: !!shift, bubbles: true, cancelable: true, composed: true, view };
+  el.dispatchEvent(new view.KeyboardEvent("keydown", init));
+  if (key === "Enter" || key === " ") el.dispatchEvent(new view.KeyboardEvent("keypress", init));
+  el.dispatchEvent(new view.KeyboardEvent("keyup", init));
+}
+
+function isEditable(el) {
+  return el.localName === "input" || el.localName === "textarea" || el.isContentEditable
+    || ["textbox", "searchbox", "combobox"].includes(el.getAttribute("role"));
 }
 
 function hide(win) {
@@ -298,6 +345,42 @@ var mcpChrome = class extends ExtensionAPI {
             }
             await install.install();
             return result;
+          });
+        },
+
+        async type(target) {
+          return reporting(async () => {
+            const win = mainWindow();
+            const el = findElement(win, target.ref, target.text);
+            if (!isEditable(el)) throw new ExtensionError(`"${labelOf(el)}" is not a field you can type into`);
+            await showAction(win, windowRect(el), target.status);
+            el.focus();
+            const view = el.ownerDocument.defaultView;
+            if (el.isContentEditable) {
+              if (target.clear) el.ownerDocument.execCommand("selectAll");
+              el.ownerDocument.execCommand("insertText", false, target.value);
+            } else {
+              el.value = (target.clear ? "" : el.value) + target.value;
+              el.dispatchEvent(new view.InputEvent("input", { bubbles: true, composed: true,
+                inputType: "insertText", data: target.value }));
+              el.dispatchEvent(new view.Event("change", { bubbles: true }));
+            }
+            if (target.submit) pressOn(el, "Enter");
+            ripple(win, windowRect(el));
+            return { label: labelOf(el), value: el.isContentEditable ? el.textContent.slice(0, 200) : el.value };
+          });
+        },
+
+        async pressKey(key, shift, status) {
+          return reporting(async () => {
+            if (!(key in KEY_CODES)) throw new ExtensionError(`${key} is not a key the agent may press`);
+            const win = mainWindow();
+            const el = focusedElement(win);
+            if (!el) throw new ExtensionError("Nothing has focus to press a key in");
+            await showAction(win, windowRect(el), status);
+            pressOn(el, key, shift);
+            ripple(win, windowRect(el));
+            return { key: shift ? `Shift+${key}` : key, on: labelOf(el) || el.localName };
           });
         },
 

@@ -96,7 +96,7 @@ async function handleHelloAck(socket, data) {
 async function requireInput() {
   const { allowInput } = await browser.storage.local.get({ allowInput: false });
   if (!allowInput) {
-    throw new Error("Clicking in Thunderbird is off. Turn on \"Let the agent click\" in MCP Bridge for Thunderbird's options.");
+    throw new Error("Clicking and typing in Thunderbird is off. Turn on \"Let the agent click\" in MCP Bridge for Thunderbird's options.");
   }
 }
 
@@ -126,6 +126,16 @@ async function handleMessage(socket, message) {
         reply(socket, id, action, await browser.mcpChrome.click({
           ref: data.ref || undefined, text: data.text || undefined, doubleClick: !!data.doubleClick,
           rightClick: !!data.rightClick, status: data.status || undefined }));
+        break;
+      case 'thunderbird.type':
+        await requireInput();
+        reply(socket, id, action, await browser.mcpChrome.type({
+          ref: data.ref || undefined, text: data.text || undefined, value: String(data.value ?? ''),
+          clear: data.clear !== false, submit: !!data.submit, status: data.status || undefined }));
+        break;
+      case 'thunderbird.pressKey':
+        await requireInput();
+        reply(socket, id, action, await browser.mcpChrome.pressKey(data.key, !!data.shift, data.status || ''));
         break;
       case 'thunderbird.updateAddon': {
         const { allowAddonUpdates } = await browser.storage.local.get({ allowAddonUpdates: false });

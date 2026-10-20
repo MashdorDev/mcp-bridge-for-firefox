@@ -195,3 +195,33 @@ async def test_updating_the_bridge_itself_says_it_restarts(tmp_path):
                                                     "from": "0.6.0", "to": "0.7.0", "restarting": True}}
 
     assert "restarting and reconnects shortly" in await call(server, "thunderbird_update_addon", path=str(xpi))
+
+
+@pytest.mark.asyncio
+async def test_type_sends_the_value_and_reports_what_the_field_holds():
+    server = StubServer("thunderbird")
+    server.response = {"type": "response", "data": {"label": "Search", "value": "Rappi"}}
+    result = await call(server, "thunderbird_type", value="Rappi", text="Search", submit=True)
+
+    assert server.sent_request["action"] == "thunderbird.type"
+    assert server.sent_request["data"] == {"ref": None, "text": "Search", "value": "Rappi", "clear": True,
+                                           "submit": True, "status": ""}
+    assert result == 'Typed into "Search" and pressed Enter; it now holds "Rappi"'
+
+
+@pytest.mark.asyncio
+async def test_keys_that_trash_mail_are_refused_without_asking():
+    server = StubServer("thunderbird")
+
+    for key in ("Delete", "Backspace"):
+        assert "is not allowed" in await call(server, "thunderbird_press_key", key=key)
+    assert server.sent_request is None
+
+
+@pytest.mark.asyncio
+async def test_space_is_sent_as_the_space_character():
+    server = StubServer("thunderbird")
+    server.response = {"type": "response", "data": {"key": " ", "on": "Inbox"}}
+    await call(server, "thunderbird_press_key", key="Space")
+
+    assert server.sent_request["data"]["key"] == " "
