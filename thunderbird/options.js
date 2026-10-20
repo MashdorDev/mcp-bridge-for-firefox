@@ -12,15 +12,17 @@ async function showStatus() {
 }
 
 (async () => {
-  const stored = await browser.storage.local.get({ browserName: '', pairingToken: '' });
+  const stored = await browser.storage.local.get({ browserName: '', pairingToken: '', allowInput: false });
   $('name').value = stored.browserName;
+  $('allowInput').checked = stored.allowInput;
   $('token').value = stored.pairingToken;
   showStatus();
   setInterval(showStatus, 2000);
 })();
 
 $('save').addEventListener('click', async () => {
-  await browser.storage.local.set({ browserName: $('name').value.trim(), pairingToken: $('token').value.trim() });
+  await browser.storage.local.set({ browserName: $('name').value.trim(), pairingToken: $('token').value.trim(),
+    allowInput: $('allowInput').checked });
   $('saved').textContent = 'Saved';
   setTimeout(() => { $('saved').textContent = ''; }, 2000);
 });

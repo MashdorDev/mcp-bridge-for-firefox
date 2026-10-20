@@ -1357,6 +1357,35 @@ class FoxMCPTools:
                        if data.get("skipped") else "")
             return f"Thunderbird elements{more}:\n" + "\n".join(lines) + skipped
 
+        @self._tool()
+        async def thunderbird_click(
+            ref: Optional[str] = None,
+            text: Optional[str] = None,
+            double_click: bool = False,
+            right_click: bool = False,
+            status: Optional[str] = None
+        ) -> str:
+            """Click a button, folder or message in Thunderbird, moving a visible
+            cursor there first so the person can follow along
+
+            Needs "Let the agent click" turned on in the Thunderbird add-on's
+            options. Double-click a message row to open it in its own tab.
+
+            Args:
+                ref: Element ref from thunderbird_snapshot, such as "r12"
+                text: Or the element's label, as shown: "Get Messages", "Inbox"
+                double_click: Double-click instead (default: False)
+                right_click: Right-click, to open a context menu (default: False)
+                status: A few words on what you are doing, shown next to the cursor
+            """
+            if not ref and not text:
+                raise ToolError("Give a ref from thunderbird_snapshot or the element's text")
+            data = await self._thunderbird_request({"action": "thunderbird.click", "data": {
+                "ref": ref, "text": text, "doubleClick": double_click, "rightClick": right_click,
+                "status": (status or "").strip()[:MAX_STATUS_LENGTH]}}, "click in Thunderbird")
+            done = "Right-clicked" if right_click else "Double-clicked" if double_click else "Clicked"
+            return f'{done} {data.get("role")} "{data.get("label")}"'
+
     async def _thunderbird_request(self, request: dict, doing: str = "read mail") -> dict:
         """Send a request to the Thunderbird add-on; its data, or ToolError with its reason"""
         response = await self.websocket_server.send_request_and_wait(
