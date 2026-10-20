@@ -1408,6 +1408,62 @@ class FoxMCPTools:
             done = "Right-clicked" if right_click else "Double-clicked" if double_click else "Clicked"
             return f'{done} {data.get("role")} "{data.get("label")}"'
 
+        @self._tool()
+        async def thunderbird_type(
+            value: str,
+            ref: Optional[str] = None,
+            text: Optional[str] = None,
+            clear: bool = True,
+            submit: bool = False,
+            status: Optional[str] = None
+        ) -> str:
+            """Type into a Thunderbird field, such as the search bar or the
+            Quick Filter, with the visible cursor going there first
+
+            Needs "Let the agent click" in the Thunderbird add-on's options.
+
+            Args:
+                value: The text to type
+                ref: Field ref from thunderbird_snapshot, such as "r12"
+                text: Or the field's label or placeholder: "Search"
+                clear: Replace what the field holds (default: True)
+                submit: Press Enter afterwards (default: False)
+                status: A few words on what you are doing, shown next to the cursor
+            """
+            if not ref and not text:
+                raise ToolError("Give a ref from thunderbird_snapshot or the field's label")
+            data = await self._thunderbird_request({"action": "thunderbird.type", "data": {
+                "ref": ref, "text": text, "value": value, "clear": clear, "submit": submit,
+                "status": (status or "").strip()[:MAX_STATUS_LENGTH]}}, "type in Thunderbird")
+            if submit:
+                return f'Typed "{data.get("value")}" into "{data.get("label")}" and pressed Enter'
+            return f'Typed into "{data.get("label")}"; it now holds "{data.get("value")}"'
+
+        # Delete and Backspace move mail to the trash in the message list
+        THUNDERBIRD_KEYS = ("Enter", "Escape", "Tab", "Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+                            "PageUp", "PageDown", "Home", "End")
+
+        @self._tool()
+        async def thunderbird_press_key(key: str, shift: bool = False, status: Optional[str] = None) -> str:
+            """Press a key on whatever has focus in Thunderbird: move through the
+            message list with ArrowDown, open with Enter, close with Escape
+
+            Allowed: Enter, Escape, Tab, Space, ArrowUp, ArrowDown, ArrowLeft,
+            ArrowRight, PageUp, PageDown, Home, End. Delete and Backspace are not,
+            since they move mail to the trash. Needs "Let the agent click".
+
+            Args:
+                key: One of the keys above
+                shift: Hold Shift, as Shift+Tab or extending a selection (default: False)
+                status: A few words on what you are doing, shown next to the cursor
+            """
+            if key not in THUNDERBIRD_KEYS:
+                raise ToolError(f"{key} is not allowed. Use one of: {', '.join(THUNDERBIRD_KEYS)}")
+            data = await self._thunderbird_request({"action": "thunderbird.pressKey", "data": {
+                "key": " " if key == "Space" else key, "shift": shift,
+                "status": (status or "").strip()[:MAX_STATUS_LENGTH]}}, "press a key in Thunderbird")
+            return f'Pressed {data.get("key")} on {data.get("on")}'
+
     async def _thunderbird_request(self, request: dict, doing: str = "read mail") -> dict:
         """Send a request to the Thunderbird add-on; its data, or ToolError with its reason"""
         response = await self.websocket_server.send_request_and_wait(
