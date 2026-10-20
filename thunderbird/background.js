@@ -62,21 +62,32 @@ async function sayHello(socket) {
     data: { ...(await identity()), client_nonce: nonce } });
 }
 
+// The token typed into the options wins; otherwise the server's own file,
+// which is on this machine whenever the server is
+async function pairingToken() {
+  const { pairingToken: typed } = await browser.storage.local.get({ pairingToken: '' });
+  return typed.trim() || (await browser.mcpChrome.readPairingToken()) || '';
+}
+
 async function handleHelloAck(socket, data) {
   const state = pairing.get(socket);
-  const { pairingToken } = await browser.storage.local.get({ pairingToken: '' });
   if (!state) return;
-  if (!pairingToken) {
-    state.problem = "no pairing token is set in MCP Bridge for Thunderbird's options";
+  const token = await pairingToken().catch((error) => {
+    state.problem = error.message;
+    return null;
+  });
+  if (token === null) return;
+  if (!token) {
+    state.problem = 'no pairing token found in ~/.foxmcp/pairing-token or the options';
   } else if (!data.proof) {
     state.problem = 'the server has no pairing token; update the MCP Bridge server';
-  } else if (data.proof !== await proof(pairingToken.trim(), 'server', state.nonce)) {
+  } else if (data.proof !== await proof(token, 'server', state.nonce)) {
     state.problem = 'the server proved a different pairing token, so Thunderbird does not answer it';
   } else {
     state.paired = true;
     state.problem = '';
     send(socket, { id: `auth_${Date.now()}`, type: 'auth', action: 'browser.auth',
-      data: { proof: await proof(pairingToken.trim(), 'client', data.server_nonce) } });
+      data: { proof: await proof(token, 'client', data.server_nonce) } });
   }
 }
 
