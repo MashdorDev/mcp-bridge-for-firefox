@@ -1405,6 +1405,64 @@ class FoxMCPTools:
             return (f"{len(messages)} of {data.get('total', len(messages))} messages from the last {since_days} days:\n"
                     + "\n".join(self._message_lines(messages)))
 
+        @self._tool()
+        async def mail_search_messages(
+            text: Optional[str] = None,
+            author: Optional[str] = None,
+            subject: Optional[str] = None,
+            folder_id: Optional[str] = None,
+            since_days: int = 90,
+            unread_only: bool = False,
+            limit: int = 25
+        ) -> str:
+            """Search mail across every account, newest first
+
+            Give at least one of text, author or subject. All given ones must match.
+
+            Args:
+                text: Words anywhere in the message, headers and body
+                author: Part of the sender's name or address
+                subject: Part of the subject
+                folder_id: Only this folder (from mail_list_folders)
+                since_days: Only messages from the last N days (default: 90)
+                unread_only: Only unread messages (default: false)
+                limit: How many to show, up to 200 (default: 25)
+            """
+            if not (text or author or subject):
+                raise ToolError("Give text, author or subject to search for")
+            data = await self._mail_request({"action": "mail.search", "data": {
+                "text": text, "author": author, "subject": subject, "folderId": folder_id,
+                "sinceDays": max(since_days, 1), "unreadOnly": unread_only, "limit": min(max(limit, 1), 200)}})
+            messages = data.get("messages", [])
+            return (f"{len(messages)} of {data.get('total', len(messages))} matches from the last {since_days} days:\n"
+                    + "\n".join(self._message_lines(messages)))
+
+        @self._tool()
+        async def mail_get_message(message_id: int, headers_only: bool = False, max_body_chars: int = 20000) -> str:
+            """Read one message: every header, its attachments and the body as text
+
+            Args:
+                message_id: The id at the start of a mail_list_messages or
+                    mail_search_messages line
+                headers_only: Leave the body out (default: false)
+                max_body_chars: Cut the body after this many characters (default: 20000)
+            """
+            m = await self._mail_request({"action": "mail.getMessage", "data": {
+                "messageId": message_id, "headersOnly": headers_only, "maxBodyChars": max(max_body_chars, 0)}})
+            lines = [f"Message {m.get('id')} in {m.get('accountId')} {m.get('folder')}",
+                     f"Subject: {m.get('subject')}", f"From: {m.get('author')}", f"Date: {m.get('date')}",
+                     f"Read: {m.get('read')}, flagged: {m.get('flagged')}, tags: {', '.join(m.get('tags') or []) or 'none'}",
+                     "", "Headers:"]
+            for name, values in (m.get("headers") or {}).items():
+                lines += [f"  {name}: {str(value)[:500]}" for value in values]
+            attachments = m.get("attachments") or []
+            lines += ["", f"Attachments ({len(attachments)}):"]
+            lines += [f"  {a['name']} ({a.get('contentType')}, {a.get('size')} bytes)" for a in attachments]
+            if not headers_only:
+                cut = " (cut short; raise max_body_chars for more)" if m.get("bodyTruncated") else ""
+                lines += ["", f"Body{cut}:", m.get("body") or "(no text body)"]
+            return "\n".join(lines)
+
     def _setup_history_tools(self):
         """Setup history management tools"""
 
