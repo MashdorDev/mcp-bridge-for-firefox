@@ -119,3 +119,15 @@ async def test_capture_is_refused_until_thunderbird_is_paired():
 
     assert server.sent_request is None
     assert "not paired" in result
+
+
+@pytest.mark.asyncio
+async def test_snapshot_lists_refs_labels_and_where_they_are():
+    server = StubServer("thunderbird")
+    server.response = {"type": "response", "data": {"total": 2, "elements": [
+        {"ref": "r1", "role": "toolbarbutton", "label": "Get Messages", "x": 40, "y": 20}]}}
+    result = await call(server, "thunderbird_snapshot", max_elements=1)
+
+    assert server.sent_request["data"] == {"maxElements": 1}
+    assert 'r1 toolbarbutton "Get Messages" at 40,20' in result
+    assert "first 1 of 2" in result

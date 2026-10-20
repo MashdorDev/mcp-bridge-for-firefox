@@ -13,6 +13,15 @@
         ]
       },
       {
+        "name": "snapshot",
+        "type": "function",
+        "async": true,
+        "description": "The shown, labelled interactive elements of the main window and the mail view, with refs",
+        "parameters": [
+          { "name": "maxElements", "type": "integer", "minimum": 1, "maximum": 1000 }
+        ]
+      },
+      {
         "name": "readPairingToken",
         "type": "function",
         "async": true,
