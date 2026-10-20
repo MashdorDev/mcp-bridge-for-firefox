@@ -143,18 +143,55 @@ async function browserIdentity() {
 
 async function sendHello(socket) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  const data = await browserIdentity();
+  if (settings.pairingToken) {
+    data.client_nonce = hexBytes(crypto.getRandomValues(new Uint8Array(16)));
+    pairing.set(socket, { nonce: data.client_nonce, paired: false,
+      problem: 'waiting for the server to prove the pairing token' });
+  } else {
+    pairing.delete(socket);
+  }
   socket.send(JSON.stringify({
     id: `hello_${Date.now()}`,
     type: 'hello',
     action: 'browser.hello',
-    data: await browserIdentity(),
+    data,
     timestamp: new Date().toISOString()
   }));
 }
 
+// Pairing, opt-in: with a token set in the options, this browser answers only
+// a server that proves it holds the same token (pairing_proof in server.py),
+// so another local program listening on the port first gets nothing.
+const pairing = new WeakMap(); // socket -> { nonce, paired, problem }
+
+const hexBytes = bytes => [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, '0')).join('');
+
+async function pairingProof(role, nonce) {
+  const encode = text => new TextEncoder().encode(text);
+  const key = await crypto.subtle.importKey('raw', encode(settings.pairingToken.trim()),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return hexBytes(await crypto.subtle.sign('HMAC', key, encode(`${role}|${nonce}`)));
+}
+
+async function handleHelloAck(socket, data) {
+  const state = pairing.get(socket);
+  if (!state) return;
+  if (!data.proof) {
+    state.problem = 'the server has no pairing token; update the MCP Bridge server';
+  } else if (data.proof !== await pairingProof('server', state.nonce)) {
+    state.problem = 'the server proved a different pairing token';
+  } else {
+    Object.assign(state, { paired: true, problem: '' });
+    socket.send(JSON.stringify({ id: `auth_${Date.now()}`, type: 'auth', action: 'browser.auth',
+      data: { proof: await pairingProof('client', data.server_nonce) }, timestamp: new Date().toISOString() }));
+  }
+}
+
 browser.storage.onChanged.addListener((changes, area) => {
-  // Every server this browser is connected to learns its new name or real-input port
-  if (area === 'local' && (changes.browserName || changes.realInput || changes.realInputPort)) {
+  // Every server this browser is connected to learns its new name or
+  // real-input port, and pairs again with a new token
+  if (area === 'local' && (changes.browserName || changes.realInput || changes.realInputPort || changes.pairingToken)) {
     sendHello(websocket);
     for (const socket of extraSockets.values()) sendHello(socket);
   }
@@ -390,12 +427,22 @@ const agentCalls = new Map(); // request id -> { tool, status }
 async function handleMessage(message, socket = websocket) {
   const { id, type, action, data } = message;
 
+  if (type === 'hello_ack') {
+    await handleHelloAck(socket, data || {});
+    return;
+  }
   if (type !== 'request') return;
   replySockets.set(id, socket);
 
   // Handle ping-pong for connection testing
   if (action === 'ping') {
     sendResponse(id, 'ping', { message: 'pong', timestamp: new Date().toISOString() });
+    return;
+  }
+
+  const unpaired = settings.pairingToken && !pairing.get(socket)?.paired;
+  if (unpaired) {
+    sendError(id, 'NOT_PAIRED', `This Firefox is not paired: ${pairing.get(socket)?.problem || 'no hello yet'}.`);
     return;
   }
 

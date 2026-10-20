@@ -98,7 +98,9 @@ async def test_a_firefox_tool_is_refused_on_thunderbird_without_asking_it():
 async def test_browser_tools_work_whichever_app_is_active():
     server = StubServer("thunderbird")
 
-    assert "Mail [Thunderbird] (active)" in await call(server, "browsers_list")
+    listed = await call(server, "browsers_list")
+    assert "Mail [Thunderbird] (active)" in listed
+    assert ", paired," in listed
 
 
 @pytest.mark.asyncio

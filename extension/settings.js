@@ -48,6 +48,9 @@ const SETTINGS_DEFAULTS = {
   // realInputPort only for one outside 9222-9229 (0: find it)
   realInput: true,
   realInputPort: 0,
+  // Optional: the server's ~/.foxmcp/pairing-token. When set, this browser
+  // answers only a server that proves it holds the same token.
+  pairingToken: '',
 };
 
 // Which permission each action needs. Actions not listed (ping, tabs.release,
