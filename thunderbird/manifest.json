@@ -1,0 +1,28 @@
+{
+  "manifest_version": 2,
+  "name": "MCP Bridge for Thunderbird",
+  "version": "0.1.0",
+  "description": "Let Claude or any MCP client see Thunderbird, through the MCP Bridge for Firefox server.",
+  "author": "Dor Zairi",
+  "homepage_url": "https://github.com/MashdorDev/mcp-bridge-for-firefox",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "tbmcp@dorzairi.dev",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": ["storage"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "experiment_apis": {
+    "mcpChrome": {
+      "schema": "experiments/mcpChrome/schema.json",
+      "parent": {
+        "scopes": ["addon_parent"],
+        "paths": [["mcpChrome"]],
+        "script": "experiments/mcpChrome/implementation.js"
+      }
+    }
+  }
+}
