@@ -14,7 +14,8 @@ async function listAccounts() {
 
 async function listFolders({ accountId } = {}) {
   const folders = (await browser.folders.query({}))
-    .filter((f) => !f.isVirtual && (!accountId || f.accountId === accountId));
+    // An account's root (path /) holds the folders but no mail
+    .filter((f) => !f.isVirtual && f.path !== '/' && (!accountId || f.accountId === accountId));
   const out = [];
   for (const f of folders) {
     const info = await browser.folders.getFolderInfo(f.id).catch(() => ({}));
