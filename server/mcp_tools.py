@@ -1229,47 +1229,42 @@ class FoxMCPTools:
                 captured_tab = response["data"].get("tabId")
                 shown = f"tab {captured_tab}, window {captured_window_id}" if captured_tab else f"window {captured_window_id}"
 
-                if not data_url:
-                    return "No screenshot data received"
-
-                # Extract the base64 part from data URL
-                data_prefix = f"data:image/{captured_format};base64,"
-                if not data_url.startswith(data_prefix):
-                    return f"Screenshot captured but unexpected format: {data_url[:100]}..."
-
-                base64_data = data_url[len(data_prefix):]
-
-                # If filename is provided, save to file
-                if filename:
-                    try:
-                        # Add file extension if not provided
-                        if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                            filename = f"{filename}.{captured_format}"
-
-                        if not os.path.isabs(filename):
-                            os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-                            filename = os.path.join(SCREENSHOT_DIR, filename)
-                        # Decode base64 and save to file
-                        image_data = base64.b64decode(base64_data)
-                        with open(filename, 'wb') as f:
-                            f.write(image_data)
-
-                        file_size = len(image_data)
-                        return f"Screenshot saved to '{filename}' ({shown}, {captured_format}, quality: {captured_quality}, size: {file_size} bytes)"
-
-                    except Exception as e:
-                        return f"Error saving screenshot to file '{filename}': {str(e)}"
-
-                else:
-                    # The image itself, which a client shows to the model; a
-                    # data URL in text was cut short and could not be looked at
-                    return Image(data=base64.b64decode(base64_data), format=captured_format)
+                return self._screenshot_result(
+                    data_url, captured_format, filename, f"{shown}, {captured_format}, quality: {captured_quality}")
 
             elif response.get("type") == "error":
                 error_msg = response.get("data", {}).get("message", "Unknown error")
                 return f"Failed to capture screenshot: {error_msg}"
 
             return "Unable to capture screenshot"
+
+    @staticmethod
+    def _screenshot_result(data_url: str, image_format: str, filename: Optional[str], details: str):
+        """The image itself, or the path it was saved to when a filename is given"""
+        if not data_url:
+            return "No screenshot data received"
+
+        data_prefix = f"data:image/{image_format};base64,"
+        if not data_url.startswith(data_prefix):
+            return f"Screenshot captured but unexpected format: {data_url[:100]}..."
+        image_data = base64.b64decode(data_url[len(data_prefix):])
+
+        if not filename:
+            # The image itself, which a client shows to the model; a data URL
+            # in text was cut short and could not be looked at
+            return Image(data=image_data, format=image_format)
+
+        try:
+            if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                filename = f"{filename}.{image_format}"
+            if not os.path.isabs(filename):
+                os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+                filename = os.path.join(SCREENSHOT_DIR, filename)
+            with open(filename, 'wb') as f:
+                f.write(image_data)
+            return f"Screenshot saved to '{filename}' ({details}, size: {len(image_data)} bytes)"
+        except Exception as e:
+            return f"Error saving screenshot to file '{filename}': {str(e)}"
 
     def _setup_history_tools(self):
         """Setup history management tools"""
@@ -1686,7 +1681,8 @@ class FoxMCPTools:
                 active = " (active)" if browser.key == server.active_browser else ""
                 version = f", add-on {browser.version}" if browser.version else ", add-on older than 1.4.3"
                 minutes = int((time.time() - browser.connected_at) // 60)
-                lines.append(f"- {browser.name}{active}: id {browser.key[:8]}{version}, "
+                app = " [Thunderbird]" if browser.app == 'thunderbird' else ""
+                lines.append(f"- {browser.name}{app}{active}: id {browser.key[:8]}{version}, "
                              f"connected {minutes} min ago")
             return f"Connected browsers ({len(browsers)}):\n" + "\n".join(lines) + away
 
