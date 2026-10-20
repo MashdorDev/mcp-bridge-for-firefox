@@ -32,12 +32,16 @@ class StubServer:
         return self.response
 
 
-async def capture(server, **kwargs):
-    tool = await FoxMCPTools(server).mcp.get_tool("thunderbird_capture_window")
+async def call(server, name, **kwargs):
+    tool = await FoxMCPTools(server).mcp.get_tool(name)
     try:
         return await tool.fn(**kwargs)
     except ToolError as error:
         return str(error)
+
+
+async def capture(server, **kwargs):
+    return await call(server, "thunderbird_capture_window", **kwargs)
 
 
 def test_hello_records_thunderbird_and_names_it():
@@ -77,7 +81,24 @@ async def test_capture_is_refused_on_firefox_without_asking_it():
     result = await capture(server)
 
     assert server.sent_request is None
-    assert "browsers_select your Thunderbird" in result
+    assert "browsers_select a Thunderbird browser first" in result
+
+
+@pytest.mark.asyncio
+async def test_a_firefox_tool_is_refused_on_thunderbird_without_asking_it():
+    server = StubServer("thunderbird")
+    result = await call(server, "history_query", query="example.org")
+
+    assert server.sent_request is None
+    assert '"Mail" is Thunderbird' in result
+    assert "browsers_select a Firefox browser first" in result
+
+
+@pytest.mark.asyncio
+async def test_browser_tools_work_whichever_app_is_active():
+    server = StubServer("thunderbird")
+
+    assert "Mail [Thunderbird] (active)" in await call(server, "browsers_list")
 
 
 @pytest.mark.asyncio

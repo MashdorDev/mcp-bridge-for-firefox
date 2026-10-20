@@ -286,9 +286,37 @@ class FoxMCPTools:
             self.group_by_tool[fn.__name__] = group
             if group in self.disabled_groups and fn.__name__ not in self.enabled_tools:
                 return fn
-            return self.mcp.tool()(self._with_status(self._failures_as_errors(fn)))
+            return self.mcp.tool()(self._with_status(self._failures_as_errors(self._for_app(group, fn))))
 
         return register
+
+    # Which app answers each group's actions. The Thunderbird add-on answers
+    # only its own; groups not listed here are Firefox's, and ANY_APP_GROUPS
+    # never reach an add-on in a way that differs between the two.
+    APP_OF_GROUP = {'thunderbird': 'thunderbird'}
+    ANY_APP_GROUPS = {'browsers', 'debug'}
+
+    def _for_app(self, group, fn):
+        """Refuse a tool when the active browser is the wrong app for it
+
+        Every tool list is fixed for the life of a server, so a Firefox tool
+        stays offered while Thunderbird is active. Refusing here, before any
+        request goes out, says why and what to do instead of letting the
+        add-on answer an action it does not know.
+        """
+        if group in self.ANY_APP_GROUPS:
+            return fn
+        needed = self.APP_OF_GROUP.get(group, 'firefox')
+
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            server = self.websocket_server
+            browser = getattr(server, 'browsers', {}).get(getattr(server, 'active_browser', None))
+            if browser is not None and browser.app != needed:
+                raise ToolError(f'"{browser.name}" is {browser.app.title()}, and {fn.__name__} needs '
+                                f'{needed.title()}. browsers_select a {needed.title()} browser first.')
+            return await fn(*args, **kwargs)
+        return wrapper
 
     def _failures_as_errors(self, fn):
         """Report a tool's failure as an MCP error rather than as a result
@@ -1267,15 +1295,6 @@ class FoxMCPTools:
         except Exception as e:
             return f"Error saving screenshot to file '{filename}': {str(e)}"
 
-    def _thunderbird_refusal(self) -> Optional[str]:
-        """Why a thunderbird_* tool cannot run on the active browser, or None"""
-        server = self.websocket_server
-        browser = getattr(server, 'browsers', {}).get(getattr(server, 'active_browser', None))
-        if browser is None or browser.app == 'thunderbird':
-            return None  # no browser: send_request_and_wait says so
-        return (f'Error: "{browser.name}" is Firefox. Thunderbird tools need the Thunderbird add-on; '
-                f'browsers_select your Thunderbird first.')
-
     def _setup_thunderbird_tools(self):
         """Setup tools only the Thunderbird add-on answers"""
 
@@ -1295,9 +1314,6 @@ class FoxMCPTools:
                 filename: File to save the PNG to (optional)
                 scale: 0.25 to 1; below 1 makes the image smaller (default: 1)
             """
-            refusal = self._thunderbird_refusal()
-            if refusal:
-                return refusal
             response = await self.websocket_server.send_request_and_wait({
                 "id": str(uuid.uuid4()),
                 "type": "request",
