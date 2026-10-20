@@ -109,6 +109,15 @@ async function handleMessage(socket, message) {
       case 'thunderbird.captureWindow':
         reply(socket, id, action, await browser.mcpChrome.captureWindow(data.scale || 1));
         break;
+      case 'mail.listAccounts':
+        reply(socket, id, action, await listAccounts());
+        break;
+      case 'mail.listFolders':
+        reply(socket, id, action, await listFolders(data));
+        break;
+      case 'mail.listMessages':
+        reply(socket, id, action, await listMessages(data));
+        break;
       default:
         fail(socket, id, 'UNKNOWN_ACTION',
           `${action} is not available in Thunderbird. browsers_select a Firefox browser for it.`);

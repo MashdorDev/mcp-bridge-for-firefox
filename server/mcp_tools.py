@@ -203,6 +203,7 @@ class FoxMCPTools:
         'debug': '_setup_debug_tools',
         'browsers': '_setup_browser_tools',
         'thunderbird': '_setup_thunderbird_tools',
+        'mail': '_setup_mail_tools',
     }
 
     def __init__(self, websocket_server, disabled_groups=None, enabled_tools=None):
@@ -293,7 +294,7 @@ class FoxMCPTools:
     # Which app answers each group's actions. The Thunderbird add-on answers
     # only its own; groups not listed here are Firefox's, and ANY_APP_GROUPS
     # never reach an add-on in a way that differs between the two.
-    APP_OF_GROUP = {'thunderbird': 'thunderbird'}
+    APP_OF_GROUP = {'thunderbird': 'thunderbird', 'mail': 'thunderbird'}
     ANY_APP_GROUPS = {'browsers', 'debug'}
 
     def _for_app(self, group, fn):
@@ -1333,6 +1334,76 @@ class FoxMCPTools:
             data = response.get("data", {})
             return self._screenshot_result(
                 data.get("dataUrl", ""), "png", filename, f"Thunderbird window, {data.get('width')}x{data.get('height')}")
+
+    async def _mail_request(self, request: dict) -> dict:
+        """Send a mail.* request; the add-on's data, or ToolError with its reason"""
+        response = await self.websocket_server.send_request_and_wait(
+            {**request, "id": str(uuid.uuid4()), "type": "request", "timestamp": datetime.now().isoformat()})
+        if "error" in response:
+            raise ToolError(f"Error reading mail: {response['error']}")
+        if response.get("type") == "error":
+            raise ToolError(f"Failed to read mail: {response.get('data', {}).get('message', 'Unknown error')}")
+        return response.get("data", {})
+
+    @staticmethod
+    def _message_lines(messages) -> List[str]:
+        lines = []
+        for m in messages:
+            marks = "".join(mark for mark, on in (("unread ", not m.get("read")), ("flagged ", m.get("flagged"))) if on)
+            lines.append(f"- [{m.get('id')}] {m.get('date', '')[:16]} {marks}{m.get('author')}: "
+                         f"{m.get('subject') or '(no subject)'}")
+        return lines
+
+    def _setup_mail_tools(self):
+        """Read-only mail tools, answered by the Thunderbird add-on"""
+
+        @self._tool()
+        async def mail_list_accounts() -> str:
+            """List Thunderbird's mail accounts with their ids and addresses"""
+            data = await self._mail_request({"action": "mail.listAccounts", "data": {}})
+            lines = [f"- {a['name']} ({a['type']}): id {a['id']}, {', '.join(a.get('identities') or []) or 'no identity'}"
+                     for a in data.get("accounts", [])]
+            return f"Accounts ({len(lines)}):\n" + "\n".join(lines)
+
+        @self._tool()
+        async def mail_list_folders(account_id: Optional[str] = None) -> str:
+            """List mail folders with their ids and unread/total counts
+
+            Args:
+                account_id: Only this account's folders (from mail_list_accounts)
+            """
+            data = await self._mail_request(
+                {"action": "mail.listFolders", "data": {"accountId": account_id} if account_id else {}})
+            lines = []
+            for f in data.get("folders", []):
+                use = f" [{', '.join(f['specialUse'])}]" if f.get("specialUse") else ""
+                lines.append(f"- {f['accountId']} {f['path']}{use}: id {f['id']}, "
+                             f"{f.get('unread', '?')} unread of {f.get('total', '?')}")
+            return f"Folders ({len(lines)}):\n" + "\n".join(lines)
+
+        @self._tool()
+        async def mail_list_messages(
+            folder_id: str,
+            since_days: int = 30,
+            unread_only: bool = False,
+            limit: int = 25
+        ) -> str:
+            """List a folder's messages, newest first
+
+            Each line starts with the message id that mail_get_message takes.
+
+            Args:
+                folder_id: Folder id from mail_list_folders
+                since_days: Only messages from the last N days (default: 30)
+                unread_only: Only unread messages (default: false)
+                limit: How many to show, up to 200 (default: 25)
+            """
+            data = await self._mail_request({"action": "mail.listMessages", "data": {
+                "folderId": folder_id, "sinceDays": max(since_days, 1), "unreadOnly": unread_only,
+                "limit": min(max(limit, 1), 200)}})
+            messages = data.get("messages", [])
+            return (f"{len(messages)} of {data.get('total', len(messages))} messages from the last {since_days} days:\n"
+                    + "\n".join(self._message_lines(messages)))
 
     def _setup_history_tools(self):
         """Setup history management tools"""
