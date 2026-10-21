@@ -252,8 +252,12 @@ var mcpChrome = class extends ExtensionAPI {
           if (agent) {
             agent.style.display = "none";
             // drawSnapshot paints what is on screen; let the hidden overlay
-            // leave it first
-            await new Promise((resolve) => win.requestAnimationFrame(() => win.requestAnimationFrame(resolve)));
+            // leave it first. A covered or minimized window gets no animation
+            // frames, so do not wait on them for long.
+            await new Promise((resolve) => {
+              win.requestAnimationFrame(() => win.requestAnimationFrame(resolve));
+              win.setTimeout(resolve, 200);
+            });
           }
           try {
             // drawSnapshot composites the chrome and every tab's content, which
