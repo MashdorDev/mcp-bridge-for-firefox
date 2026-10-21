@@ -250,14 +250,14 @@ token, so treat them as proportions rather than exact counts:
 |---|---|---|
 | `content` | get_text, get_html, execute_script, execute_predefined, snapshot, click, hover, drag, type, press_key, upload_files, copy_image, paste | 3,462 |
 | `tabs` | list, create, close, switch, release, move, capture_screenshot, group, ungroup, groups_update, groups_query | 2,536 |
+| `thunderbird` | capture_window, snapshot, click, type, press_key, console, update_addon (Thunderbird) | 1,442 |
 | `windows` | list, get, get_current, create, close, focus, update | 1,028 |
 | `requests` | start_monitoring, stop_monitoring, list_captured, get_content | 853 |
+| `mail` | list_accounts, list_folders, list_messages, search_messages, get_message (Thunderbird) | 732 |
 | `bookmarks` | list, search, create, create_folder, update, delete | 703 |
 | `navigation` | back, forward, reload, go_to_url | 546 |
 | `history` | query, get_recent, delete_item | 304 |
-| `mail` | list_accounts, list_folders, list_messages, search_messages, get_message (Thunderbird) | 731 |
 | `browsers` | list, select | 196 |
-| `thunderbird` | capture_window (Thunderbird) | 170 |
 | `debug` | websocket_status | 78 |
 
 All groups are on by default. An unrecognized group name is an error rather than

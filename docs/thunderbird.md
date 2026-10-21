@@ -9,6 +9,23 @@ the same MCP server as the Firefox add-on and shows up in `browsers_list` marked
 - `thunderbird_capture_window`: a screenshot of the whole main window, mail view
   and add-on tabs included. `tabs_capture_screenshot` cannot see the mail view,
   because it is part of Thunderbird's own interface, not a content tab.
+- `thunderbird_snapshot`: the buttons, tabs, folders, message rows and fields in
+  the main window, each with a ref. `thunderbird_click` clicks one by ref or by
+  its visible text (double-click opens a message, right-click opens its menu),
+  `thunderbird_type` types into a field, optionally pressing Enter, and
+  `thunderbird_press_key` presses Enter, Escape, Tab, Space, the arrows,
+  PageUp/PageDown or Home/End on whatever has focus. Delete and Backspace are
+  refused, since in the message list they move mail to the trash. These need
+  **Let the agent click** in the add-on's options. An orange cursor shows each
+  action and stays until the server disconnects or 2 minutes pass without one.
+  Content inside add-on tabs is out of reach: use the window capture there.
+- `thunderbird_console`: recent errors and warnings from Thunderbird and its
+  add-ons, and add-on pages' console.log output, filtered by age, text and level.
+- `thunderbird_update_addon`: reinstalls an add-on from a local .xpi. Only an
+  add-on that is already installed and unsigned can be updated, so nothing new is
+  added and add-ons from addons.thunderbird.net are left alone. Needs **Let the
+  agent update add-ons** in the options. Updating this add-on itself restarts it,
+  and it reconnects within about 30 seconds.
 - `mail_list_accounts`, `mail_list_folders`, `mail_list_messages`,
   `mail_search_messages` and `mail_get_message`: read-only mail access. Nothing
   sends, moves, deletes or marks mail.
@@ -35,8 +52,9 @@ hand only if the server keeps its token somewhere else.
 
 The window capture and the token file read go through a small experiment API
 (`thunderbird/experiments/mcpChrome/`), which Thunderbird allows in add-ons
-installed from a file. It has fixed operations only: draw the main window, and
-read the one token file. There is no way to run arbitrary code through it.
+installed from a file. It has fixed operations only: draw the main window, list,
+click and type into its own interface elements, press the allowed keys, read the
+console, update an installed unsigned add-on, and read the one token file. There is no way to run arbitrary code through it.
 Experiments have no stability promise, so a Thunderbird update can break them.
 
 Mail access uses Thunderbird's standard `accounts`, `folders` and `messages`

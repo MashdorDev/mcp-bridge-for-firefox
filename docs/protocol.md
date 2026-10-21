@@ -1707,10 +1707,18 @@ Example test workflows:
 ## Thunderbird actions
 
 Answered only by the Thunderbird add-on (`thunderbird/`). Mail actions are read-only.
+`click`, `type` and `pressKey` fail unless "Let the agent click" is on in the
+add-on's options, and `updateAddon` unless "Let the agent update add-ons" is.
 
 | Action | Data | Response data |
 |---|---|---|
 | `thunderbird.captureWindow` | `scale` (0.25 to 1) | `dataUrl` (PNG), `width`, `height` |
+| `thunderbird.snapshot` | `maxElements` | `elements`: `ref`, `role`, `label`, `x`, `y` (its center in the window); `total`, `skipped`, `skipReason` |
+| `thunderbird.click` | `ref` or `text`, `doubleClick`, `rightClick`, `status` | `role`, `label` |
+| `thunderbird.type` | `ref` or `text`, `value`, `clear` (default true), `submit`, `status` | `label`, `value` |
+| `thunderbird.pressKey` | `key`, `shift`, `status` | `key`, `on` |
+| `thunderbird.console` | `sinceMs`, `contains`, `errorsOnly`, `limit` | `messages`: `time` (UTC), `level`, `text`, `source`; `total` |
+| `thunderbird.updateAddon` | `path` (absolute, .xpi) | `id`, `name`, `from`, `to`, `restarting` |
 | `mail.listAccounts` | none | `accounts`: `id`, `name`, `type`, `identities` |
 | `mail.listFolders` | `accountId` (optional) | `folders`: `id`, `accountId`, `path`, `name`, `specialUse`, `unread`, `total` |
 | `mail.listMessages` | `folderId`, `sinceDays`, `unreadOnly`, `limit` | `total`, `messages` (newest first) |
