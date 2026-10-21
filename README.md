@@ -35,8 +35,10 @@ works in. Set each profile's name on the add-on's options page. Details:
 
 A separate add-on in [`thunderbird/`](thunderbird/) connects Thunderbird to the
 same server, as one more entry in `browsers_list`. It can capture the whole
-Thunderbird window and read mail (accounts, folders, search, one message with its
-headers and body), read-only. It pairs with the server through a shared token
+Thunderbird window, read mail (accounts, folders, search, one message with its
+headers and body) without changing any, click and type in Thunderbird's own
+interface with a visible cursor, read its error console, and update local add-on
+builds. Clicking and add-on updates each need a switch in the add-on's options. It pairs with the server through a shared token
 before answering anything. Setup: [docs/thunderbird.md](docs/thunderbird.md).
 
 ## Install
