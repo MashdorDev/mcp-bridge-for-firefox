@@ -2492,6 +2492,21 @@ class FoxMCPTools:
                 server.real_input_found_on(0)
             return None
 
+        def scripted_refusal(action):
+            """Why the scripted fallback is refused, when the server runs real input only
+
+            The fallback is what a page sees as untrusted events. Some editors
+            (Facebook's composer) show the text yet keep none of it, so a
+            fallback that "succeeded" can publish an empty post.
+            """
+            if not getattr(self.websocket_server, 'real_input_only', False):
+                return None
+            return (f"Did not {action}: the server runs with real input only, and this browser "
+                    "has no real input right now. Turn real input on in the add-on's settings "
+                    "(on Windows it needs add-on 1.9 or later; elsewhere start Firefox with "
+                    "--remote-debugging-port), or start the server without --real-input-only "
+                    "to allow scripted events.")
+
         def spot(tab_id, ref=None, selector=None, x=None, y=None, side="", name=None):
             """An element or a viewport point, as the content script takes it"""
             if not ref and not selector and not name and (x is None or y is None):
@@ -2622,6 +2637,8 @@ class FoxMCPTools:
                     if error:
                         return f"Failed to click: {error}"
                     return f"{done} {prep.get('target')} at {x},{y} (real input){await click_effect(tab_id, prep)}"
+                if refusal := scripted_refusal("click"):
+                    return refusal
                 data, error = await page_request({"action": "content.click", "data": {
                     "tabId": tab_id, **start, "doubleClick": double_click, "rightClick": right_click}})
                 if error:
@@ -2636,6 +2653,8 @@ class FoxMCPTools:
                 if error:
                     return f"Failed to click: {error}"
                 return f"{done} {prep.get('target')} (real input){await click_effect(tab_id, prep)}"
+            if refusal := scripted_refusal("click"):
+                return refusal
             data, error = await page_request({
                 "action": "content.click",
                 "data": {**target(tab_id, ref, selector, text), "doubleClick": double_click,
@@ -2671,6 +2690,8 @@ class FoxMCPTools:
                 if error:
                     return f"Failed to hover: {error}"
                 return f"Hovering over {prep.get('target')} (real input)"
+            if refusal := scripted_refusal("hover"):
+                return refusal
             data, error = await page_request({"action": "content.hover", "data": {"tabId": tab_id, **start}})
             if error:
                 return f"Failed to hover: {error}"
@@ -2730,6 +2751,10 @@ class FoxMCPTools:
                     return f"Failed to drag: {error}"
                 if pan or not prep.get("pageDragAndDrop"):
                     return f"Dragged {prep.get('target')} (real input)"
+            # A page's own drag-and-drop goes scripted even with real input, since
+            # Firefox's remote control never drops it; only a missing backend is refused
+            elif refusal := scripted_refusal("drag"):
+                return refusal
             data, error = await page_request({"action": "content.drag",
                                               "data": {"tabId": tab_id, "from": start, "to": end,
                                                        "button": button}})
@@ -2784,6 +2809,8 @@ class FoxMCPTools:
                     await real_input(tab_id, None, prep.get("selector"), "key",
                                      lambda bidi, context, element: bidi.press(context, "Enter"))
                 return f"Typed into {checked.get('typed')} (real input)"
+            if refusal := scripted_refusal("type"):
+                return refusal
             data, error = await page_request({
                 "action": "content.type",
                 "data": {**target(tab_id, ref, selector, field),
@@ -2835,6 +2862,8 @@ class FoxMCPTools:
                     return f"Failed to press {key}: {error}"
                 copied = await note_copy(copy_before) if COPY_KEYS.match(key) else ""
                 return f"Pressed {key} (real input){copied}"
+            if refusal := scripted_refusal(f"press {key}"):
+                return refusal
             data, error = await page_request({
                 "action": "content.press_key",
                 "data": {"tabId": tab_id, "key": key, "ref": ref, "selector": selector}

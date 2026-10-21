@@ -84,8 +84,25 @@ Options:
                        Tool groups to leave unregistered (default: none)
   --enable-tools TOOL[,TOOL...]
                        Individual tools to register anyway (default: none)
+  --real-input-only    Never fall back to scripted events (also FOXMCP_REAL_INPUT_ONLY=1)
   -h, --help           Show help message
 ```
+
+## Real input only
+
+Without real input, `content_click`, `content_type`, `content_press_key`,
+`content_hover` and `content_drag` dispatch events from a script. Most pages
+accept those. Some do not, and some accept them only on the surface: Facebook's
+composer shows typed text and keeps none of it, so a post published after a
+scripted `content_type` goes out empty while every tool reported success.
+
+`--real-input-only` (or `FOXMCP_REAL_INPUT_ONLY=1` in the client's environment)
+turns the fallback off. A click, key, typing, hover or drag that cannot be done
+with real input fails and says why, and nothing is sent to the page. A page's own
+drag-and-drop still drops by script, because Firefox's remote control never
+drops one; that case is unchanged. Real input itself is set up as before: turn it
+on in the add-on's settings (Windows, add-on 1.9 or later) or start Firefox with
+`--remote-debugging-port`.
 
 ## Serving MCP over stdio
 

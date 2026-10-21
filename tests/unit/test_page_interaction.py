@@ -248,3 +248,36 @@ class TestFailuresAreErrors:
         tool = await FoxMCPTools(stub_server).mcp.get_tool("content_type")
 
         assert await tool.fn(tab_id=4, text="hello", selector="#t") == 'Typed into [r1] input "Name"'
+
+
+class TestRealInputOnly:
+    """With --real-input-only and no real input, nothing scripted reaches the page"""
+
+    @pytest.fixture
+    def strict(self, stub_server):
+        stub_server.real_input_only = True
+        return stub_server
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name, kwargs, action", [
+        ("content_click", {"ref": "r2"}, "click"),
+        ("content_click", {"x": 10, "y": 20}, "click"),
+        ("content_hover", {"ref": "r2"}, "hover"),
+        ("content_drag", {"from_ref": "r1", "to_ref": "r2"}, "drag"),
+        ("content_type", {"ref": "r1", "text": "hi"}, "type"),
+        ("content_press_key", {"key": "Enter"}, "press Enter"),
+    ])
+    async def test_refuses_the_scripted_fallback(self, call_tool, strict, name, kwargs, action):
+        result = await call_tool(name, tab_id=4, **kwargs)
+
+        assert result.startswith(f"Did not {action}: the server runs with real input only")
+        assert strict.sent_request is None
+
+    @pytest.mark.asyncio
+    async def test_scripted_events_still_go_out_when_off(self, call_tool, stub_server):
+        stub_server.response = {"type": "response", "data": {"clicked": '[r2] button "Save"'}}
+
+        result = await call_tool("content_click", tab_id=4, ref="r2")
+
+        assert stub_server.sent_request["action"] == "content.click"
+        assert result == 'Clicked [r2] button "Save"'
