@@ -187,11 +187,13 @@ class FoxMCPServer:
 
     def __init__(self, host: str = "localhost", port: int = 8765, mcp_port: int = None, start_mcp: bool = True,
                  disabled_tool_groups=None, enabled_tools=None, use_stdio: bool = False,
-                 pairing_token: Optional[str] = None):
+                 pairing_token: Optional[str] = None, real_input_only: bool = False):
         self.host = host
         self.port = port
         self.pairing_token = pairing_token
         self.use_stdio = use_stdio
+        # Refuse the scripted fallback for clicks, keys, typing, hovers and drags
+        self.real_input_only = real_input_only
 
         # In stdio mode the MCP side has no listener, so there is no port to pick.
         # Running the selection anyway would bind-test a port nothing serves and
@@ -1376,6 +1378,13 @@ async def main():
                         help='Comma-separated individual tools to register even though '
                              'their group is disabled, named as the client sees them '
                              '(e.g. tabs_capture_screenshot). Overrides FOXMCP_ENABLE_TOOLS.')
+    parser.add_argument('--real-input-only', action='store_true',
+                        help='Never fall back to events dispatched by script: a click, key, '
+                             'typing, hover or drag that cannot be done with real input '
+                             'fails and says why. Sites such as Facebook ignore scripted '
+                             'events while showing their effect, so the fallback can report '
+                             'success for an action that did nothing. Also '
+                             'FOXMCP_REAL_INPUT_ONLY=1.')
 
     args = parser.parse_args()
 
@@ -1431,7 +1440,9 @@ async def main():
             disabled_tool_groups=disabled_tool_groups,
             enabled_tools=enabled_tools,
             use_stdio=args.stdio,
-            pairing_token=ensure_pairing_token()
+            pairing_token=ensure_pairing_token(),
+            real_input_only=args.real_input_only
+                or os.environ.get('FOXMCP_REAL_INPUT_ONLY', '').strip().lower() in ('1', 'true', 'yes')
         )
         logger.info(f"Pairing token for the add-ons' options: {PAIRING_TOKEN_FILE}")
     except ValueError as e:
