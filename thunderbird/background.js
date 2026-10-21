@@ -124,7 +124,9 @@ async function handleMessage(socket, message) {
       case 'thunderbird.click':
         await requireInput();
         reply(socket, id, action, await browser.mcpChrome.click({
-          ref: data.ref || undefined, text: data.text || undefined, doubleClick: !!data.doubleClick,
+          ref: data.ref || undefined, text: data.text || undefined,
+          x: typeof data.x === 'number' ? data.x : undefined, y: typeof data.y === 'number' ? data.y : undefined,
+          hover: !!data.hover, doubleClick: !!data.doubleClick,
           rightClick: !!data.rightClick, status: data.status || undefined }));
         break;
       case 'thunderbird.type':

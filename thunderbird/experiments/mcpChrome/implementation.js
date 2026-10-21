@@ -200,6 +200,33 @@ function ripple(win, rect) {
   o.hideTimer = win.setTimeout(() => hide(win), AGENT_IDLE_MS);
 }
 
+// A click at a point of the window, for what the chrome DOM cannot see:
+// add-on tabs and other content run in their own process. The events go
+// in at the widget level, as real input does, so they reach that process.
+// The person's own mouse pointer does not move.
+async function clickAt(win, target) {
+  const { x, y } = target;
+  if (x < 0 || y < 0 || x > win.innerWidth || y > win.innerHeight) {
+    throw new ExtensionError(`${Math.round(x)},${Math.round(y)} is outside the window (${win.innerWidth}x${win.innerHeight})`);
+  }
+  const rect = { x: x - 10, y: y - 10, width: 20, height: 20 };
+  await showAction(win, rect, target.status);
+  const button = target.rightClick ? 2 : 0;
+  const send = (type, clickCount = 1) => win.synthesizeMouseEvent(type, x, y,
+    { button, buttons: type === "mousedown" ? (button === 2 ? 2 : 1) : 0, clickCount },
+    { isDOMEventSynthesized: false, isWidgetEventSynthesized: false, isAsyncEnabled: true });
+  send("mousemove");
+  if (!target.hover) {
+    for (let count = 1; count <= (target.doubleClick ? 2 : 1); count++) {
+      send("mousedown", count);
+      send("mouseup", count);
+    }
+    ripple(win, rect);
+  }
+  const hit = win.document.elementFromPoint(x, y);
+  return { role: hit?.localName || "", label: hit ? labelOf(hit) : "" };
+}
+
 // Keys the agent may press. Delete and Backspace are left out on purpose: in
 // the message list they move mail to the trash.
 const KEY_CODES = { Enter: 13, Escape: 27, Tab: 9, " ": 32, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37,
@@ -294,6 +321,7 @@ var mcpChrome = class extends ExtensionAPI {
         async click(target) {
           return reporting(async () => {
             const win = mainWindow();
+            if (target.x !== undefined) return clickAt(win, target);
             const el = findElement(win, target.ref, target.text);
             const rect = windowRect(el);
             await showAction(win, rect, target.status);
