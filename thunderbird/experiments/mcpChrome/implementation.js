@@ -143,9 +143,12 @@ function findElement(win, ref, text) {
     return el;
   }
   const wanted = (text || "").toLowerCase();
-  const shown = shownElements(win);
-  const el = shown.find((e) => labelOf(e).toLowerCase() === wanted)
-    || shown.find((e) => labelOf(e).toLowerCase().includes(wanted));
+  // A whole document can carry a role too; its label is all of its text, so
+  // a partial match would land on it before the control that was meant
+  const shown = shownElements(win).filter((e) => e.localName !== "html" && e.localName !== "body");
+  const labelled = shown.map((e) => ({ e, label: labelOf(e).toLowerCase() }));
+  const el = labelled.find((x) => x.label === wanted)?.e
+    || labelled.filter((x) => x.label.includes(wanted)).sort((a, b) => a.label.length - b.label.length)[0]?.e;
   if (!el) throw new ExtensionError(`Nothing shown is labelled "${text}"`);
   return el;
 }
@@ -321,7 +324,8 @@ var mcpChrome = class extends ExtensionAPI {
         async click(target) {
           return reporting(async () => {
             const win = mainWindow();
-            if (target.x !== undefined) return clickAt(win, target);
+            // Schema-checked objects carry null, not undefined, for what was left out
+            if (typeof target.x === "number") return clickAt(win, target);
             const el = findElement(win, target.ref, target.text);
             const rect = windowRect(el);
             await showAction(win, rect, target.status);
