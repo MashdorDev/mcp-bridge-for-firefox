@@ -1383,6 +1383,10 @@ class FoxMCPTools:
         async def thunderbird_click(
             ref: Optional[str] = None,
             text: Optional[str] = None,
+            x: Optional[float] = None,
+            y: Optional[float] = None,
+            screenshot_scale: float = 1.0,
+            hover: bool = False,
             double_click: bool = False,
             right_click: bool = False,
             status: Optional[str] = None
@@ -1393,19 +1397,40 @@ class FoxMCPTools:
             Needs "Let the agent click" turned on in the Thunderbird add-on's
             options. Double-click a message row to open it in its own tab.
 
+            Add-on tabs (such as Smart Inbox) do not show in thunderbird_snapshot:
+            click those by position instead, with x and y read off a
+            thunderbird_capture_window screenshot and the scale it was taken at.
+            hover=True only moves the mouse there, to show hover buttons.
+
             Args:
                 ref: Element ref from thunderbird_snapshot, such as "r12"
                 text: Or the element's label, as shown: "Get Messages", "Inbox"
+                x: Or a position: pixels from the screenshot's left edge
+                y: Pixels from the screenshot's top edge
+                screenshot_scale: The scale the screenshot was taken at (default: 1)
+                hover: Move the mouse to x, y without clicking (default: False)
                 double_click: Double-click instead (default: False)
                 right_click: Right-click, to open a context menu (default: False)
                 status: A few words on what you are doing, shown next to the cursor
             """
-            if not ref and not text:
-                raise ToolError("Give a ref from thunderbird_snapshot or the element's text")
-            data = await self._thunderbird_request({"action": "thunderbird.click", "data": {
-                "ref": ref, "text": text, "doubleClick": double_click, "rightClick": right_click,
-                "status": (status or "").strip()[:MAX_STATUS_LENGTH]}}, "click in Thunderbird")
-            done = "Right-clicked" if right_click else "Double-clicked" if double_click else "Clicked"
+            at_point = x is not None or y is not None
+            if at_point and (x is None or y is None):
+                raise ToolError("Give both x and y")
+            if not ref and not text and not at_point:
+                raise ToolError("Give a ref from thunderbird_snapshot, the element's text, or x and y")
+            if at_point and screenshot_scale <= 0:
+                raise ToolError("screenshot_scale must be above 0")
+            target = {"ref": ref, "text": text, "doubleClick": double_click, "rightClick": right_click,
+                      "status": (status or "").strip()[:MAX_STATUS_LENGTH]}
+            if at_point:
+                target.update({"x": x / screenshot_scale, "y": y / screenshot_scale, "hover": hover})
+            data = await self._thunderbird_request({"action": "thunderbird.click", "data": target},
+                                                   "click in Thunderbird")
+            done = ("Moved the mouse" if at_point and hover else "Right-clicked" if right_click
+                    else "Double-clicked" if double_click else "Clicked")
+            if at_point:
+                over = data.get("label") or data.get("role") or "the window"
+                return f"{done} at {round(x)},{round(y)} (over {over})"
             return f'{done} {data.get("role")} "{data.get("label")}"'
 
         @self._tool()

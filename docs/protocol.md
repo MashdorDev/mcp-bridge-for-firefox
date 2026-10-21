@@ -1714,7 +1714,7 @@ add-on's options, and `updateAddon` unless "Let the agent update add-ons" is.
 |---|---|---|
 | `thunderbird.captureWindow` | `scale` (0.25 to 1) | `dataUrl` (PNG), `width`, `height` |
 | `thunderbird.snapshot` | `maxElements` | `elements`: `ref`, `role`, `label`, `x`, `y` (its center in the window); `total`, `skipped`, `skipReason` |
-| `thunderbird.click` | `ref` or `text`, `doubleClick`, `rightClick`, `status` | `role`, `label` |
+| `thunderbird.click` | `ref` or `text`, or `x` and `y` (window points) with `hover`; `doubleClick`, `rightClick`, `status` | `role`, `label` (of the element under the point, for `x`/`y`) |
 | `thunderbird.type` | `ref` or `text`, `value`, `clear` (default true), `submit`, `status` | `label`, `value` |
 | `thunderbird.pressKey` | `key`, `shift`, `status` | `key`, `on` |
 | `thunderbird.console` | `sinceMs`, `contains`, `errorsOnly`, `limit` | `messages`: `time` (UTC), `level`, `text`, `source`; `total` |

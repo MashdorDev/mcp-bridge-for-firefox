@@ -248,3 +248,31 @@ async def test_an_empty_console_says_so():
     server.response = {"type": "response", "data": {"total": 0, "messages": []}}
 
     assert await call(server, "thunderbird_console", since_minutes=5) == "No console messages in the last 5 minutes"
+
+
+@pytest.mark.asyncio
+async def test_click_at_a_point_scales_it_to_the_window():
+    server = StubServer("thunderbird")
+    server.response = {"type": "response", "data": {"role": "browser", "label": ""}}
+    result = await call(server, "thunderbird_click", x=400, y=200, screenshot_scale=0.8)
+
+    assert server.sent_request["data"]["x"] == 500
+    assert server.sent_request["data"]["y"] == 250
+    assert server.sent_request["data"]["hover"] is False
+    assert result == "Clicked at 400,200 (over browser)"
+
+
+@pytest.mark.asyncio
+async def test_click_at_a_point_needs_both_coordinates():
+    server = StubServer("thunderbird")
+
+    assert "Give both x and y" in await call(server, "thunderbird_click", x=10)
+    assert server.sent_request is None
+
+
+@pytest.mark.asyncio
+async def test_hover_only_moves_the_mouse():
+    server = StubServer("thunderbird")
+    server.response = {"type": "response", "data": {"role": "browser", "label": ""}}
+
+    assert (await call(server, "thunderbird_click", x=10, y=20, hover=True)).startswith("Moved the mouse at 10,20")

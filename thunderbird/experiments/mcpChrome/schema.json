@@ -25,7 +25,7 @@
         "name": "click",
         "type": "function",
         "async": true,
-        "description": "Move the agent cursor to an element and click it with real mouse events",
+        "description": "Move the agent cursor to an element, or a point of the window, and click it",
         "parameters": [
           {
             "name": "target",
@@ -33,6 +33,9 @@
             "properties": {
               "ref": { "type": "string", "optional": true },
               "text": { "type": "string", "optional": true },
+              "x": { "type": "number", "optional": true },
+              "y": { "type": "number", "optional": true },
+              "hover": { "type": "boolean", "optional": true },
               "doubleClick": { "type": "boolean", "optional": true },
               "rightClick": { "type": "boolean", "optional": true },
               "status": { "type": "string", "optional": true }

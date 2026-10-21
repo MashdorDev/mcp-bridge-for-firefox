@@ -18,7 +18,10 @@ the same MCP server as the Firefox add-on and shows up in `browsers_list` marked
   refused, since in the message list they move mail to the trash. These need
   **Let the agent click** in the add-on's options. An orange cursor shows each
   action and stays until the server disconnects or 2 minutes pass without one.
-  Content inside add-on tabs is out of reach: use the window capture there.
+  Add-on tabs run in their own process, so their content does not show in the
+  snapshot: `thunderbird_click` takes `x` and `y` from a window capture there
+  (with `hover` to only move the mouse), sent as widget-level mouse events. Your
+  own mouse pointer does not move.
 - `thunderbird_console`: recent errors and warnings from Thunderbird and its
   add-ons, and console calls from Thunderbird's own code, filtered by age, text
   and level. Add-on pages run in another process, so their console.log calls do
@@ -55,7 +58,7 @@ hand only if the server keeps its token somewhere else.
 The window capture and the token file read go through a small experiment API
 (`thunderbird/experiments/mcpChrome/`), which Thunderbird allows in add-ons
 installed from a file. It has fixed operations only: draw the main window, list,
-click and type into its own interface elements, press the allowed keys, read the
+click and type into its own interface elements, click at a point of the window, press the allowed keys, read the
 console, update an installed unsigned add-on, and read the one token file. There is no way to run arbitrary code through it.
 Experiments have no stability promise, so a Thunderbird update can break them.
 
