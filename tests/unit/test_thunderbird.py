@@ -7,6 +7,7 @@ these stub the socket and the server.
 """
 
 import base64
+from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
@@ -236,7 +237,8 @@ async def test_console_lists_messages_with_level_and_source():
     result = await call(server, "thunderbird_console", contains="inbox.js", errors_only=True, limit=1)
 
     assert server.sent_request["data"] == {"sinceMs": 600000, "contains": "inbox.js", "errorsOnly": True, "limit": 1}
-    assert "13:05:12 error: x is undefined  (moz-extension://abc/inbox.js:12)" in result
+    local = datetime.fromisoformat("2026-10-20T13:05:12+00:00").astimezone()
+    assert f"{local:%H:%M:%S} error: x is undefined  (moz-extension://abc/inbox.js:12)" in result
     assert "newest 1 of 3" in result
 
 

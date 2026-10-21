@@ -1464,7 +1464,8 @@ class FoxMCPTools:
             messages = data.get("messages", [])
             if not messages:
                 return f"No console messages in the last {since_minutes} minutes"
-            lines = [f"{m['time'][11:19]} {m['level']}: {m['text']}" + (f"  ({m['source']})" if m.get("source") else "")
+            # The add-on sends UTC; show the clock time the user sees
+            lines = [f"{datetime.fromisoformat(m['time'].replace('Z', '+00:00')).astimezone():%H:%M:%S} {m['level']}: {m['text']}" + (f"  ({m['source']})" if m.get("source") else "")
                      for m in messages]
             more = f" (newest {len(messages)} of {data.get('total')})" if data.get("total", 0) > len(messages) else ""
             return f"Console, last {since_minutes} minutes{more}:\n" + "\n".join(lines)
