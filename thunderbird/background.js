@@ -137,6 +137,10 @@ async function handleMessage(socket, message) {
         await requireInput();
         reply(socket, id, action, await browser.mcpChrome.pressKey(data.key, !!data.shift, data.status || ''));
         break;
+      case 'thunderbird.console':
+        reply(socket, id, action, await browser.mcpChrome.consoleMessages(
+          data.sinceMs || 600000, data.contains || '', !!data.errorsOnly, data.limit || 50));
+        break;
       case 'thunderbird.updateAddon': {
         const { allowAddonUpdates } = await browser.storage.local.get({ allowAddonUpdates: false });
         if (!allowAddonUpdates) {

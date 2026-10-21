@@ -7,6 +7,7 @@ these stub the socket and the server.
 """
 
 import base64
+from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
@@ -225,3 +226,25 @@ async def test_space_is_sent_as_the_space_character():
     await call(server, "thunderbird_press_key", key="Space")
 
     assert server.sent_request["data"]["key"] == " "
+
+
+@pytest.mark.asyncio
+async def test_console_lists_messages_with_level_and_source():
+    server = StubServer("thunderbird")
+    server.response = {"type": "response", "data": {"total": 3, "messages": [
+        {"time": "2026-10-20T13:05:12.000Z", "level": "error", "text": "x is undefined",
+         "source": "moz-extension://abc/inbox.js:12"}]}}
+    result = await call(server, "thunderbird_console", contains="inbox.js", errors_only=True, limit=1)
+
+    assert server.sent_request["data"] == {"sinceMs": 600000, "contains": "inbox.js", "errorsOnly": True, "limit": 1}
+    local = datetime.fromisoformat("2026-10-20T13:05:12+00:00").astimezone()
+    assert f"{local:%H:%M:%S} error: x is undefined  (moz-extension://abc/inbox.js:12)" in result
+    assert "newest 1 of 3" in result
+
+
+@pytest.mark.asyncio
+async def test_an_empty_console_says_so():
+    server = StubServer("thunderbird")
+    server.response = {"type": "response", "data": {"total": 0, "messages": []}}
+
+    assert await call(server, "thunderbird_console", since_minutes=5) == "No console messages in the last 5 minutes"

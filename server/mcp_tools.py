@@ -1439,6 +1439,37 @@ class FoxMCPTools:
                 return f'Typed "{data.get("value")}" into "{data.get("label")}" and pressed Enter'
             return f'Typed into "{data.get("label")}"; it now holds "{data.get("value")}"'
 
+        @self._tool()
+        async def thunderbird_console(
+            since_minutes: int = 10,
+            contains: Optional[str] = None,
+            errors_only: bool = False,
+            limit: int = 50
+        ) -> str:
+            """Read Thunderbird's error console: errors and warnings from
+            Thunderbird and its add-ons, and add-on pages' console.log output
+
+            Use it when an add-on misbehaves: contains="moz-extension" or the
+            add-on's file name narrows it down.
+
+            Args:
+                since_minutes: How far back to look (default: 10)
+                contains: Only messages whose text or source contains this
+                errors_only: Leave warnings and logs out (default: False)
+                limit: Newest messages to show, up to 500 (default: 50)
+            """
+            data = await self._thunderbird_request({"action": "thunderbird.console", "data": {
+                "sinceMs": max(since_minutes, 1) * 60000, "contains": contains or "",
+                "errorsOnly": errors_only, "limit": min(max(limit, 1), 500)}}, "read Thunderbird's console")
+            messages = data.get("messages", [])
+            if not messages:
+                return f"No console messages in the last {since_minutes} minutes"
+            # The add-on sends UTC; show the clock time the user sees
+            lines = [f"{datetime.fromisoformat(m['time'].replace('Z', '+00:00')).astimezone():%H:%M:%S} {m['level']}: {m['text']}" + (f"  ({m['source']})" if m.get("source") else "")
+                     for m in messages]
+            more = f" (newest {len(messages)} of {data.get('total')})" if data.get("total", 0) > len(messages) else ""
+            return f"Console, last {since_minutes} minutes{more}:\n" + "\n".join(lines)
+
         # Delete and Backspace move mail to the trash in the message list
         THUNDERBIRD_KEYS = ("Enter", "Escape", "Tab", "Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
                             "PageUp", "PageDown", "Home", "End")

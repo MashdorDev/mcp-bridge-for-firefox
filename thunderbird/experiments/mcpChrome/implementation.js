@@ -386,6 +386,50 @@ var mcpChrome = class extends ExtensionAPI {
           });
         },
 
+        // Errors and warnings from Thunderbird and its add-ons, and the
+        // console.log calls of add-on pages, newest last
+        async consoleMessages(sinceMs, contains, errorsOnly, limit) {
+          return reporting(async () => {
+            const since = Date.now() - sinceMs;
+            const wanted = (contains || "").toLowerCase();
+            const out = [];
+            for (const m of Services.console.getMessageArray() || []) {
+              if ((m.timeStamp || 0) < since) continue;
+              if (m instanceof Ci.nsIScriptError) {
+                const level = m.flags & Ci.nsIScriptError.warningFlag ? "warning" : "error";
+                out.push({ time: m.timeStamp, level, text: m.errorMessage,
+                  source: m.sourceName ? `${m.sourceName}:${m.lineNumber}` : "" });
+              } else {
+                out.push({ time: m.timeStamp, level: "info", text: m.message, source: "" });
+              }
+            }
+            let consoleApiEvents = [];
+            try {
+              consoleApiEvents = Cc["@mozilla.org/consoleAPI-storage;1"].getService(Ci.nsIConsoleAPIStorage).getEvents();
+            } catch (error) {
+              // no console.log store in this build: errors and warnings above still count
+            }
+            for (const e of consoleApiEvents) {
+              if ((e.timeStamp || 0) < since) continue;
+              const text = (e.arguments || []).map((a) => {
+                try {
+                  return typeof a === "string" ? a : JSON.stringify(a);
+                } catch (error) {
+                  return String(a);
+                }
+              }).join(" ");
+              out.push({ time: e.timeStamp, level: e.level === "warn" ? "warning" : e.level, text,
+                source: e.filename ? `${e.filename}:${e.lineNumber}` : "" });
+            }
+            const kept = out
+              .filter((m) => !errorsOnly || m.level === "error")
+              .filter((m) => !wanted || `${m.text} ${m.source}`.toLowerCase().includes(wanted))
+              .sort((a, b) => a.time - b.time);
+            return { messages: kept.slice(-limit).map((m) => ({ ...m, text: String(m.text).slice(0, 1000),
+              time: new Date(m.time).toISOString() })), total: kept.length };
+          });
+        },
+
         async hideAgent() {
           for (const win of Services.wm.getEnumerator("mail:3pane")) hide(win);
         },
