@@ -20,7 +20,9 @@ the same MCP server as the Firefox add-on and shows up in `browsers_list` marked
   action and stays until the server disconnects or 2 minutes pass without one.
   Content inside add-on tabs is out of reach: use the window capture there.
 - `thunderbird_console`: recent errors and warnings from Thunderbird and its
-  add-ons, and add-on pages' console.log output, filtered by age, text and level.
+  add-ons, and console calls from Thunderbird's own code, filtered by age, text
+  and level. Add-on pages run in another process, so their console.log calls do
+  not show; their uncaught errors do.
 - `thunderbird_update_addon`: reinstalls an add-on from a local .xpi. Only an
   add-on that is already installed and unsigned can be updated, so nothing new is
   added and add-ons from addons.thunderbird.net are left alone. Needs **Let the

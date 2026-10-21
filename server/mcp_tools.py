@@ -1447,7 +1447,9 @@ class FoxMCPTools:
             limit: int = 50
         ) -> str:
             """Read Thunderbird's error console: errors and warnings from
-            Thunderbird and its add-ons, and add-on pages' console.log output
+            Thunderbird and its add-ons, and console calls from Thunderbird's
+            own code. Add-on pages run in another process, so their
+            console.log calls do not show here; their uncaught errors do.
 
             Use it when an add-on misbehaves: contains="moz-extension" or the
             add-on's file name narrows it down.

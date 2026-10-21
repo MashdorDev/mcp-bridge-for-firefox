@@ -75,7 +75,7 @@
         "name": "consoleMessages",
         "type": "function",
         "async": true,
-        "description": "Recent console errors, warnings and add-on console.log output",
+        "description": "Recent console errors and warnings, and console calls from Thunderbird's own code",
         "parameters": [
           { "name": "sinceMs", "type": "integer", "minimum": 1000 },
           { "name": "contains", "type": "string" },
