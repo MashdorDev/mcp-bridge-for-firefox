@@ -390,8 +390,9 @@ var mcpChrome = class extends ExtensionAPI {
           });
         },
 
-        // Errors and warnings from Thunderbird and its add-ons, and the
-        // console.log calls of add-on pages, newest last
+        // Errors and warnings from Thunderbird and its add-ons, and console
+        // calls made in this (the parent) process, newest last. Add-on pages
+        // log in their own process, which this store does not see.
         async consoleMessages(sinceMs, contains, errorsOnly, limit) {
           return reporting(async () => {
             const since = Date.now() - sinceMs;
