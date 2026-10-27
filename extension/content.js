@@ -410,7 +410,7 @@ async function typeInto(el, text, clear) {
   if (el.isContentEditable) {
     if (clear) host.textContent = text;
     else el.textContent += text;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
+    host.dispatchEvent(new Event('input', { bubbles: true }));
     showTypingField(host);
     return host;
   }
