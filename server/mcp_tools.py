@@ -62,6 +62,8 @@ COPY_KEYS = re.compile(r"^(control|ctrl|meta|command)\+(c|x|insert)$", re.IGNORE
 PASTE_KEYS = re.compile(r"^((control|ctrl|meta|command)(\+shift)?\+v|shift\+insert)$", re.IGNORECASE)
 # How long an app may take to put a copy on the clipboard after the keys
 COPY_WAIT_S = 1.5
+# real_input's answer for a target only the scripted path can work
+SCRIPTED_ONLY = object()
 
 # Where a screenshot given a bare file name is saved, rather than wherever the
 # server happens to run from (a client's project folder)
@@ -2462,8 +2464,10 @@ class FoxMCPTools:
             prep, error = await page_request(message)
             if error:
                 return None, error
+            # A target real input cannot work (a <select>): the scripted path,
+            # even when the server runs real input only
             if prep.get("scripted"):
-                return None
+                return SCRIPTED_ONLY
 
             prep["token"] = token
 
@@ -2802,7 +2806,7 @@ class FoxMCPTools:
                 await bidi.type_text(context, text)
 
             real = await real_input(tab_id, ref, selector, "type", type_for_real, target_name=field)
-            if real is not None:
+            if real is not None and real is not SCRIPTED_ONLY:
                 prep, error = real
                 if error:
                     return f"Failed to type: {error}"
@@ -2818,7 +2822,7 @@ class FoxMCPTools:
                     await real_input(tab_id, None, prep.get("selector"), "key",
                                      lambda bidi, context, element: bidi.press(context, "Enter"))
                 return f"Typed into {checked.get('typed')} (real input)"
-            if refusal := scripted_refusal("type"):
+            if real is not SCRIPTED_ONLY and (refusal := scripted_refusal("type")):
                 return refusal
             data, error = await page_request({
                 "action": "content.type",
