@@ -2462,6 +2462,8 @@ class FoxMCPTools:
             prep, error = await page_request(message)
             if error:
                 return None, error
+            if prep.get("scripted"):
+                return None
 
             prep["token"] = token
 
@@ -2780,6 +2782,8 @@ class FoxMCPTools:
         ) -> str:
             """Type text into an input, textarea or editable element
 
+            On a <select>, picks the option whose value or label is the text.
+
             Args:
                 tab_id: ID of the tab
                 text: Text to enter
@@ -2833,6 +2837,9 @@ class FoxMCPTools:
         ) -> str:
             """Press a key such as "Enter", "Escape" or "Tab" on an element, or on
             the focused element when no target is given
+
+            A single character ("m", "5") is typed into a text field unless the
+            page cancels the key. Use content_type for longer text.
 
             Copy keys (Control+c, Control+x) report whether anything was copied.
             Paste keys (Control+v, Shift+Insert) go through only while the

@@ -347,7 +347,31 @@ function editingHost(el) {
   return host;
 }
 
+// A <select> takes no text, so typing into one picks the option whose value
+// or label is the text, as a person choosing it from the list would. Setting
+// it as an input's value threw "'set value' called on an object that does not
+// implement interface HTMLInputElement".
+function chooseOption(select, text, clear) {
+  const options = [...select.options];
+  const label = text.trim().toLowerCase();
+  const option = options.find(o => o.value === text) || options.find(o => o.label.trim().toLowerCase() === label);
+  if (!option) {
+    const names = options.map(o => `"${o.label.trim()}"`);
+    throw new Error(`The list has no option "${text}". Its options: ${names.slice(0, 40).join(', ')}` +
+      (names.length > 40 ? `, and ${names.length - 40} more` : ''));
+  }
+  select.scrollIntoView({ block: 'center' });
+  select.focus();
+  if (select.multiple && clear) options.forEach(o => { o.selected = false; });
+  option.selected = true;
+  select.dispatchEvent(new Event('input', { bubbles: true }));
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  showTypingField(select);
+  return select;
+}
+
 async function typeInto(el, text, clear) {
+  if (el instanceof HTMLSelectElement) return chooseOption(el, text, clear);
   // Found before typing: replacing the editor's contents can remove el itself
   const host = el.isContentEditable ? editingHost(el) : el;
   el.scrollIntoView({ block: 'center' });
@@ -441,9 +465,26 @@ function checkTyped(el, text, cleared) {
   }
 }
 
+const NOT_TEXT_INPUTS = /^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/;
+
 function pressKey(el, key) {
   const init = { key, bubbles: true, cancelable: true, composed: true };
   const notCancelled = el.dispatchEvent(new KeyboardEvent('keydown', init));
+  // A synthetic key event types nothing, so a printable key the page let
+  // through goes in the way content_type puts text in
+  const textField = el.isContentEditable || el instanceof HTMLTextAreaElement ||
+    (el instanceof HTMLInputElement && !NOT_TEXT_INPUTS.test(el.type));
+  if (notCancelled && [...key].length === 1 && textField) {
+    if (document.activeElement !== el && !el.contains(document.activeElement)) {
+      el.focus();
+      // Focus leaves the caret at the start; a key pressed on a field goes after its text
+      if (el.isContentEditable) caretToEnd(el);
+      else if (el.selectionStart != null) el.setSelectionRange(el.value.length, el.value.length);
+    }
+    if (!document.execCommand('insertText', false, key)) {
+      throw new Error(`The field did not accept "${key}"`);
+    }
+  }
   el.dispatchEvent(new KeyboardEvent('keyup', init));
   // A synthetic Enter does not submit a form, so do what the browser would.
   if (key === 'Enter' && notCancelled && el.form && el.tagName !== 'TEXTAREA') {
@@ -1240,6 +1281,9 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const rect = el && el.getBoundingClientRect();
             sendResponse(el ? {
               selector: `[${REF_ATTR}="${refFor(el)}"]`, target: describe(el), screen: screenInfo(),
+              // Real input would click a <select> open into the browser's own
+              // list, where typed keys do not reach the page
+              scripted: data.purpose === 'type' && el instanceof HTMLSelectElement,
               point: { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) },
             } : { target: 'the page', screen: screenInfo() });
           })
@@ -1341,8 +1385,12 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'pressKey': {
         const el = hasTarget(data) ? findTarget(data) : (document.activeElement || document.body);
         showOverlay('typing');
-        pressKey(el, data.key);
-        sendResponse({ pressed: data.key });
+        try {
+          pressKey(el, data.key);
+          sendResponse({ pressed: data.key });
+        } catch (error) {
+          sendResponse({ error: error.message });
+        }
         break;
       }
 
