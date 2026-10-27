@@ -250,8 +250,27 @@ function pageState(el) {
 }
 
 const pendingClicks = new Map();
-// A field's text before real typing, to tell keys that never reached the page
+// Real key presses the page has had since real typing was prepared. None at
+// all means the keys never reached it (on Windows, a window behind another
+// one); an unchanged field does not, as typing the same text again, a tag
+// input turning text into chips and keys taken as shortcuts all leave one.
 const pendingTyped = new Map();
+const TYPED_WATCH_MS = 30000;
+const LATE_KEYS_MS = 1000;
+
+function watchRealKeys(token) {
+  const watch = { keys: 0 };
+  const count = event => { if (event.isTrusted) watch.keys++; };
+  window.addEventListener('keydown', count, true);
+  // A check that never comes (an older server, a failed real input) stops it too
+  const timer = setTimeout(() => watch.stop(), TYPED_WATCH_MS);
+  watch.stop = () => {
+    window.removeEventListener('keydown', count, true);
+    clearTimeout(timer);
+    pendingTyped.delete(token);
+  };
+  pendingTyped.set(token, watch);
+}
 
 const DIALOGS = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
 const MODALS = 'dialog:modal, [aria-modal=true]';
@@ -1363,7 +1382,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'realInputPrep': {
         const el = hasTarget(data) ? findTarget(data) : null;
         if (data.purpose === 'click') pendingClicks.set(data.token, pageState(el));
-        if (el && data.purpose === 'type') pendingTyped.set(data.token, fieldText(el.isContentEditable ? editingHost(el) : el));
+        if (el && data.purpose === 'type' && !(el instanceof HTMLSelectElement)) watchRealKeys(data.token);
         showOverlay(data.purpose === 'type' ? 'typing' : 'clicking');
         if (el && data.purpose === 'click' && agentLabel === 'Clicking') {
           const name = (el.getAttribute('aria-label') || el.innerText || el.value || el.title || '')
@@ -1469,20 +1488,24 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       case 'checkTypedText': {
         const el = findTarget(data);
-        const before = pendingTyped.get(data.token);
-        pendingTyped.delete(data.token);
-        // Untouched, so none of the keys arrived; the server types it another way
-        if (data.text && before !== undefined && fieldText(el.isContentEditable ? editingHost(el) : el) === before) {
-          sendResponse({ nothingArrived: true });
-          break;
-        }
-        try {
+        const watch = pendingTyped.get(data.token);
+        // Posted key messages can still be queued, so none is waited for a little
+        const waitForKeys = async () => {
+          for (let waited = 0; watch && !watch.keys && waited < LATE_KEYS_MS; waited += 100) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        };
+        waitForKeys().then(() => {
+          watch?.stop();
+          // Not one key reached the page; the server types it another way
+          if (watch && !watch.keys && data.text) {
+            sendResponse({ nothingArrived: true });
+            return;
+          }
           checkTyped(el, data.text, data.clear);
           showTypingField(el);
           sendResponse({ typed: describe(el) });
-        } catch (error) {
-          sendResponse({ error: error.message });
-        }
+        }).catch(error => sendResponse({ error: error.message }));
         break;
       }
 

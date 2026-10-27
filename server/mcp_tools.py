@@ -2825,9 +2825,9 @@ class FoxMCPTools:
                         await real_input(tab_id, None, selector, "key",
                                          lambda bidi, context, element: bidi.press(context, "Enter"))
                     return f"Typed into {checked.get('typed')} (real input)"
-                # The keys never reached the page (on Windows, a Firefox window
-                # behind another one), so the field is as it was and scripted
-                # typing cannot double anything
+                # Not one key press reached the page (on Windows, a Firefox
+                # window behind another one), so nothing was typed anywhere and
+                # scripted typing does not double it
                 if getattr(self.websocket_server, 'real_input_only', False):
                     return ("Failed to type: the real key presses did not reach the page, so nothing was "
                             "typed. Bring the Firefox window to the front and try again.")
