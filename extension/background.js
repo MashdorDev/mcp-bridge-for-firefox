@@ -1188,9 +1188,20 @@ async function handleContentAction(id, action, data) {
 
       case 'content.execute_script':
         try {
-          const executeResults = await browser.tabs.executeScript(data.tabId, {
-            code: data.script
-          });
+          // Scripts in one tab share a scope, so a const from one call made the
+          // next fail ("redeclaration of const d"). A block keeps each one's
+          // names to itself and still returns its last expression. A top-level
+          // return or await needs a function, and the function's promise is
+          // what the result waits for.
+          let executeResults;
+          try {
+            executeResults = await browser.tabs.executeScript(data.tabId, { code: `{\n${data.script}\n}` });
+          } catch (error) {
+            if (!/return not in function|await is only valid/.test(error.message)) throw error;
+            executeResults = await browser.tabs.executeScript(data.tabId, {
+              code: `(async () => {\n${data.script}\n})()`
+            });
+          }
           // executeScript returns an array of results from each frame
           const result = executeResults && executeResults.length > 0 ? executeResults[0] : null;
           sendResponse(id, action, { 

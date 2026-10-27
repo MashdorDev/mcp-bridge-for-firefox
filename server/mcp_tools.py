@@ -2340,6 +2340,10 @@ class FoxMCPTools:
         async def content_execute_script(tab_id: int, code: str) -> str:
             """Execute JavaScript code in a tab
 
+            The result is the value of the last expression, or what a top-level
+            `return` gives; `await` works at the top level with `return`. Each
+            call has its own scope, so names declared in one are gone in the next.
+
             Args:
                 tab_id: ID of the tab to execute script in
                 code: JavaScript code to execute
