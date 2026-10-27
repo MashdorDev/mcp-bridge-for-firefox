@@ -486,21 +486,25 @@ function pressKey(el, key) {
   // comboboxes) handle keys themselves.
   const typing = [...key].length === 1 && !el.readOnly && !el.disabled && (el.isContentEditable ||
     el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !NOT_TEXT_INPUTS.test(el.type)));
-  const focused = () => document.activeElement === el || el.contains(document.activeElement);
+  // A paragraph of an editor cannot take focus; the editor it belongs to can
+  const field = el.isContentEditable ? editingHost(el) : el;
+  const focused = () => document.activeElement === field || field.contains(document.activeElement);
   if (typing && !focused()) {
-    el.focus();
+    field.focus();
     // A field that cannot take focus would have the key typed into whichever one has it
     if (!focused()) throw new Error(`${describe(el)} cannot take focus, so "${key}" was not typed`);
     // Focus leaves the caret at the start; a key pressed on a field goes after its text
-    if (el.isContentEditable) caretToEnd(el);
-    else if (el.selectionStart != null) el.setSelectionRange(el.value.length, el.value.length);
+    if (el.selectionStart != null) el.setSelectionRange(el.value.length, el.value.length);
   }
-  const before = typing ? fieldText(el) : null;
+  // Focusing an editor does not move the selection into it: it stayed in the
+  // last editor typed into, and the key went there
+  if (typing && el.isContentEditable && !field.contains(window.getSelection().anchorNode)) caretToEnd(field);
+  const before = typing ? fieldText(field) : null;
   const notCancelled = el.dispatchEvent(new KeyboardEvent('keydown', init));
   let refused = false;
   // A page that writes the key itself on keydown, or moves focus on (a box per
   // digit of a code), has handled it; typing it too would double it
-  if (typing && notCancelled && focused() && fieldText(el) === before) {
+  if (typing && notCancelled && focused() && fieldText(field) === before) {
     refused = !document.execCommand('insertText', false, key);
   }
   el.dispatchEvent(new KeyboardEvent('keyup', init));
