@@ -69,7 +69,7 @@ function snapshot(maxElements) {
 function targetPoint({ ref, selector, targetName, x, y }) {
   if (ref || selector || targetName) {
     const el = findTarget({ ref, selector, targetName });
-    el.scrollIntoView({ block: 'center', inline: 'center' });
+    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
     const rect = el.getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, el, size: Math.min(rect.width, rect.height) };
   }
@@ -184,7 +184,9 @@ const ACTIVE_ELEMENTS = 'a[href], button, input, select, textarea, summary, [rol
   '[role=option], [role=tab], [role=checkbox], [role=radio], [role=switch], [contenteditable=""], [contenteditable="true"]';
 
 // An element found by the name a person sees on it, the way they would point
-// at it: shown before hidden, an exact name before one that starts or merely
+// at it: shown before hidden, inside a modal dialog in front before the page
+// behind it (a person cannot reach past it, and "Editor" matched a table cell
+// behind the dialog instead of the option in it), an exact name before one that starts or merely
 // contains it, something that can be clicked or typed into before plain text,
 // and the innermost element before the boxes around it
 // Compares two rankings place by place, the first difference deciding
@@ -195,13 +197,16 @@ const outranks = (a, b) => {
 
 function findByName(name) {
   const wanted = name.replace(/\s+/g, ' ').trim().toLowerCase();
+  const modals = frontDialogs(MODALS).filter(blocksPage);
   let best = null;
   for (const el of document.querySelectorAll(NAMED_ELEMENTS)) {
     const have = nameOf(el);
     if (!have) continue;
     const match = have === wanted ? 3 : have.startsWith(wanted) ? 2 : have.includes(wanted) ? 1 : 0;
     if (!match) continue;
-    const score = [isShown(el) ? 1 : 0, match, el.matches(ACTIVE_ELEMENTS) ? 1 : 0, -el.getElementsByTagName('*').length];
+    const inModal = modals.some(o => o.contains(el)) ? 1 : 0;
+    const score = [isShown(el) ? 1 : 0, inModal, match, el.matches(ACTIVE_ELEMENTS) ? 1 : 0,
+      -el.getElementsByTagName('*').length];
     if (!best || outranks(score, best.score)) best = { el, score };
   }
   if (!best) throw new Error(`Nothing on the page is named "${name}"`);
@@ -246,6 +251,68 @@ function pageState(el) {
 
 const pendingClicks = new Map();
 
+const DIALOGS = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
+const MODALS = 'dialog:modal, [aria-modal=true]';
+
+// Dialogs that are open and in front: what is at a dialog's own centre is part
+// of it. Hit testing ignores opacity, so a dialog stuck invisible mid-fade still
+// counts; `visible` leaves those out, for ranking what a person can see.
+function frontDialogs(selector, visible = true) {
+  return [...document.querySelectorAll(selector)].filter(dialog => {
+    if (!isShown(dialog) || (visible && !dialog.checkVisibility?.({ opacityProperty: true }))) return false;
+    const rect = dialog.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return Boolean(hit && dialog.contains(hit));
+  });
+}
+
+// A backdrop: something laid over the whole page, in front of everything else
+function coversPage(el) {
+  if (el === document.documentElement || el === document.body) return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width >= innerWidth * 0.9 && rect.height >= innerHeight * 0.9;
+}
+
+// Whether a dialog shuts out the page behind it, as a modal one does. Some
+// cookie banners say aria-modal yet leave the page usable, so a corner of the
+// page outside the dialog must land on it or on a backdrop.
+function blocksPage(dialog) {
+  if (dialog.matches('dialog:modal')) return true;
+  const rect = dialog.getBoundingClientRect();
+  const corner = [[2, 2], [innerWidth - 3, 2], [2, innerHeight - 3], [innerWidth - 3, innerHeight - 3]]
+    .find(([x, y]) => x < rect.left || x > rect.right || y < rect.top || y > rect.bottom);
+  if (!corner) return true;
+  const hit = document.elementFromPoint(...corner);
+  return Boolean(hit && (dialog.contains(hit) || coversPage(hit)));
+}
+
+// What a person's click on el would land on instead, said in the click's
+// result: an invisible backdrop left by a modal stuck mid-fade took every
+// click on a Save button, and the clicks were reported as done. Checked once
+// el is scrolled into view, before the click.
+function coverOf(el) {
+  // A link that wraps has a box around both lines, whose centre can be other
+  // text; a real click goes to the first line
+  const rect = el.getClientRects()[0];
+  if (!rect || !rect.width || !rect.height) return '';
+  const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  // A click anywhere in a field's label (a hidden checkbox behind a toggle) is a click on the field
+  if (!hit || hit === el || el.contains(hit) || hit.contains(el) || hit.closest('label')?.control === el) return '';
+  let invisible = false;
+  for (let node = hit; node && !invisible; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    invisible = style.opacity === '0' || style.visibility === 'hidden';
+  }
+  const kind = typeof hit.className === 'string' && hit.className.trim() ? `.${hit.className.trim().split(/\s+/)[0]}` : '';
+  let note = `it is covered by ${invisible ? 'an invisible ' : ''}${describe(hit)}${kind}, ` +
+    `where a person's click would land`;
+  // The dialog the cover belongs to, or the one in front of a backdrop
+  const dialog = frontDialogs(DIALOGS, false)
+    .filter(o => !o.contains(el) && (o.contains(hit) || coversPage(hit))).pop();
+  if (dialog) note += `; open in front: ${describe(dialog)}`;
+  return note;
+}
+
 async function clickEffect(before) {
   await new Promise(resolve => setTimeout(resolve, 400));
   const after = pageState(before.el && before.el.isConnected ? before.el : null);
@@ -264,8 +331,9 @@ async function clickEffect(before) {
   if (after.checked !== before.checked && after.checked != null) {
     changes.push(after.checked === true || after.checked === 'true' ? 'it is now checked' : 'it is now unchecked');
   }
-  return changes.length ? changes.join('; ')
+  const effect = changes.length ? changes.join('; ')
     : 'no change to the address, focus, menus or dialogs (a canvas may still have changed)';
+  return before.covered ? `${before.covered}; ${effect}` : effect;
 }
 
 // Sites listen on pointerdown or mousedown as often as on click (Google Drive's
@@ -275,7 +343,7 @@ async function clickEffect(before) {
 // a folder in Google Drive; a lone dblclick event is ignored there.
 // clicks: 1, 2 for a double-click, or 'right' for a right-click
 function clickElement(el, clicks = 1) {
-  el.scrollIntoView({ block: 'center', inline: 'center' });
+  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
   const rect = el.getBoundingClientRect();
   const init = {
     bubbles: true, cancelable: true, composed: true, view: window, button: 0,
@@ -1060,7 +1128,7 @@ function humanPath(from, to, targetSize) {
 }
 
 async function moveCursorTo(el, press) {
-  el.scrollIntoView({ block: 'center', inline: 'center' });
+  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
   const rect = el.getBoundingClientRect();
   const to = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   return moveCursorToPoint(to, Math.min(rect.width, rect.height), press);
@@ -1264,6 +1332,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const before = pageState(el);
         moveCursorTo(el, true)
           .then(() => {
+            before.covered = coverOf(el);
             clickElement(el, data.rightClick ? 'right' : data.doubleClick ? 2 : 1);
             return clickEffect(before);
           })
@@ -1301,7 +1370,9 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
         (el ? moveCursorTo(el, data.purpose === 'click') : Promise.resolve())
           .then(() => {
             document.documentElement.setAttribute('data-foxmcp-tab', data.token);
-            const rect = el && el.getBoundingClientRect();
+            if (el && data.purpose === 'click') pendingClicks.get(data.token).covered = coverOf(el);
+            // The first line of a link that wraps, as for the cover check
+            const rect = el && (el.getClientRects()[0] || el.getBoundingClientRect());
             sendResponse(el ? {
               selector: `[${REF_ATTR}="${refFor(el)}"]`, target: describe(el), screen: screenInfo(),
               // Real input would click a <select> open into the browser's own
