@@ -250,6 +250,8 @@ function pageState(el) {
 }
 
 const pendingClicks = new Map();
+// A field's text before real typing, to tell keys that never reached the page
+const pendingTyped = new Map();
 
 const DIALOGS = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
 const MODALS = 'dialog:modal, [aria-modal=true]';
@@ -1361,6 +1363,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'realInputPrep': {
         const el = hasTarget(data) ? findTarget(data) : null;
         if (data.purpose === 'click') pendingClicks.set(data.token, pageState(el));
+        if (el && data.purpose === 'type') pendingTyped.set(data.token, fieldText(el.isContentEditable ? editingHost(el) : el));
         showOverlay(data.purpose === 'type' ? 'typing' : 'clicking');
         if (el && data.purpose === 'click' && agentLabel === 'Clicking') {
           const name = (el.getAttribute('aria-label') || el.innerText || el.value || el.title || '')
@@ -1466,6 +1469,13 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       case 'checkTypedText': {
         const el = findTarget(data);
+        const before = pendingTyped.get(data.token);
+        pendingTyped.delete(data.token);
+        // Untouched, so none of the keys arrived; the server types it another way
+        if (data.text && before !== undefined && fieldText(el.isContentEditable ? editingHost(el) : el) === before) {
+          sendResponse({ nothingArrived: true });
+          break;
+        }
         try {
           checkTyped(el, data.text, data.clear);
           showTypingField(el);

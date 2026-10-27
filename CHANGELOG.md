@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Real typing that never reaches the page is typed another way.** When real key presses leave the field as it was (on Windows, a Firefox window behind another one), `content_type` types the text with scripted events and says so, instead of failing with "Only part of the text arrived". With `--real-input-only` it fails and says to bring the window to the front.
 - **Elements are scrolled to at once before an action.** On pages with smooth scrolling the element was still moving when its position was read.
 - **Click by text looks in the open dialog first.** With a modal dialog open in front, `content_click(text=...)` and the other name lookups prefer what is inside it over the page behind it, which a person cannot reach. Menus, listboxes and dialogs that are hidden or not in front do not count. "Editor" had matched a table cell behind a role picker instead of the option in it.
 - **A click says when something covers its target.** When the element at the target's centre is another one (a fixed header, or an invisible backdrop left by a modal stuck mid-fade), the result says what covers it, whether it is invisible, and which dialog is open in front. A click in a field's own label is not a cover, and a link that wraps is checked on its first line. A scripted click still reaches the element, but a person's click would land on the cover, and clicks on a covered Save button had been reported as done while nothing saved.

@@ -2806,23 +2806,33 @@ class FoxMCPTools:
                 await bidi.type_text(context, text)
 
             real = await real_input(tab_id, ref, selector, "type", type_for_real, target_name=field)
+            fallback = ""
             if real is not None and real is not SCRIPTED_ONLY:
                 prep, error = real
                 if error:
                     return f"Failed to type: {error}"
                 # The field the prep found, so a name is not looked up again
-                found = {"tabId": tab_id, "ref": None, "selector": prep.get("selector")}
+                ref, selector, field = None, prep.get("selector"), None
                 checked, error = await page_request({
                     "action": "content.check_typed",
-                    "data": {**found, "text": text, "clear": clear}
+                    "data": {"tabId": tab_id, "ref": None, "selector": selector, "text": text,
+                             "clear": clear, "token": prep["token"]}
                 })
                 if error:
                     return f"Failed to type: {error}"
-                if submit:
-                    await real_input(tab_id, None, prep.get("selector"), "key",
-                                     lambda bidi, context, element: bidi.press(context, "Enter"))
-                return f"Typed into {checked.get('typed')} (real input)"
-            if real is not SCRIPTED_ONLY and (refusal := scripted_refusal("type")):
+                if not checked.get("nothingArrived"):
+                    if submit:
+                        await real_input(tab_id, None, selector, "key",
+                                         lambda bidi, context, element: bidi.press(context, "Enter"))
+                    return f"Typed into {checked.get('typed')} (real input)"
+                # The keys never reached the page (on Windows, a Firefox window
+                # behind another one), so the field is as it was and scripted
+                # typing cannot double anything
+                if getattr(self.websocket_server, 'real_input_only', False):
+                    return ("Failed to type: the real key presses did not reach the page, so nothing was "
+                            "typed. Bring the Firefox window to the front and try again.")
+                fallback = " (real key presses did not reach the page, so it was typed with scripted events)"
+            elif real is not SCRIPTED_ONLY and (refusal := scripted_refusal("type")):
                 return refusal
             data, error = await page_request({
                 "action": "content.type",
@@ -2831,7 +2841,7 @@ class FoxMCPTools:
             })
             if error:
                 return f"Failed to type: {error}"
-            return f"Typed into {data.get('typed')}"
+            return f"Typed into {data.get('typed')}{fallback}"
 
         # Press Key Tool
         @self._tool()
