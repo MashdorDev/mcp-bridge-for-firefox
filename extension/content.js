@@ -250,26 +250,40 @@ function pageState(el) {
 }
 
 const pendingClicks = new Map();
-// Real key presses the page has had since real typing was prepared. None at
-// all means the keys never reached it (on Windows, a window behind another
-// one); an unchanged field does not, as typing the same text again, a tag
-// input turning text into chips and keys taken as shortcuts all leave one.
-const pendingTyped = new Map();
-const TYPED_WATCH_MS = 30000;
-const LATE_KEYS_MS = 1000;
+// Real key presses or pointer presses the page has had since real input was
+// prepared. None at all means the input never reached it (on Windows, a
+// window behind another one, or one Firefox does not deliver to) and was
+// reported as done. What changed on the page does not tell: typing the same
+// text again, a tag input turning text into chips and keys taken as shortcuts
+// all leave a field as it was.
+const realInputWatches = new Map();
+const REAL_INPUT_WATCH_MS = 30000;
+const LATE_INPUT_MS = 1000;
 
-function watchRealKeys(token) {
-  const watch = { keys: 0 };
-  const count = event => { if (event.isTrusted) watch.keys++; };
-  window.addEventListener('keydown', count, true);
-  // A check that never comes (an older server, a failed real input) stops it too
-  const timer = setTimeout(() => watch.stop(), TYPED_WATCH_MS);
+function watchRealInput(token, type) {
+  const watch = { count: 0 };
+  const count = event => { if (event.isTrusted) watch.count++; };
+  window.addEventListener(type, count, true);
+  // A question that never comes (an older server, a failed real input) stops it too
+  const timer = setTimeout(() => watch.stop(), REAL_INPUT_WATCH_MS);
   watch.stop = () => {
-    window.removeEventListener('keydown', count, true);
+    window.removeEventListener(type, count, true);
     clearTimeout(timer);
-    pendingTyped.delete(token);
+    realInputWatches.delete(token);
   };
-  pendingTyped.set(token, watch);
+  realInputWatches.set(token, watch);
+}
+
+// Whether the real input reached the page, or null when it was not watched.
+// Posted messages can still be queued, so none is waited for a little.
+async function realInputArrived(token) {
+  const watch = realInputWatches.get(token);
+  if (!watch) return null;
+  for (let waited = 0; !watch.count && waited < LATE_INPUT_MS; waited += 100) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  watch.stop();
+  return watch.count > 0;
 }
 
 const DIALOGS = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
@@ -1382,7 +1396,9 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'realInputPrep': {
         const el = hasTarget(data) ? findTarget(data) : null;
         if (data.purpose === 'click') pendingClicks.set(data.token, pageState(el));
-        if (el && data.purpose === 'type' && !(el instanceof HTMLSelectElement)) watchRealKeys(data.token);
+        const watched = { click: el && 'pointerdown', key: 'keydown',
+          type: el && !(el instanceof HTMLSelectElement) && 'keydown' }[data.purpose];
+        if (watched) watchRealInput(data.token, watched);
         showOverlay(data.purpose === 'type' ? 'typing' : 'clicking');
         if (el && data.purpose === 'click' && agentLabel === 'Clicking') {
           const name = (el.getAttribute('aria-label') || el.innerText || el.value || el.title || '')
@@ -1443,7 +1459,10 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const from = targetPoint(data.from);
           const to = data.to ? targetPoint(data.to) : null;
           const drag = data.purpose === 'drag';
-          if (data.purpose === 'click') pendingClicks.set(data.token, pageState(from.el));
+          if (data.purpose === 'click') {
+            pendingClicks.set(data.token, pageState(from.el));
+            watchRealInput(data.token, 'pointerdown');
+          }
           const dragAndDrop = drag && !data.button && usesPageDragAndDrop(from.el);
           showOverlay(drag ? 'grab' : 'clicking');
           moveCursorToPoint(from, from.size, data.purpose === 'click' || drag)
@@ -1478,27 +1497,23 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'clickEffect': {
         const before = pendingClicks.get(data.token);
         pendingClicks.delete(data.token);
-        if (!before) {
-          sendResponse({ effect: '' });
-          break;
-        }
-        clickEffect(before).then(effect => sendResponse({ effect }));
+        realInputArrived(data.token).then(arrived => {
+          if (arrived === false) return { notArrived: true };
+          return before ? clickEffect(before).then(effect => ({ effect })) : { effect: '' };
+        }).then(sendResponse, error => sendResponse({ error: error.message }));
+        break;
+      }
+
+      case 'realInputArrived': {
+        realInputArrived(data.token).then(arrived => sendResponse({ arrived }));
         break;
       }
 
       case 'checkTypedText': {
         const el = findTarget(data);
-        const watch = pendingTyped.get(data.token);
-        // Posted key messages can still be queued, so none is waited for a little
-        const waitForKeys = async () => {
-          for (let waited = 0; watch && !watch.keys && waited < LATE_KEYS_MS; waited += 100) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
-        };
-        waitForKeys().then(() => {
-          watch?.stop();
+        realInputArrived(data.token).then(arrived => {
           // Not one key reached the page; the server types it another way
-          if (watch && !watch.keys && data.text) {
+          if (arrived === false && data.text) {
             sendResponse({ nothingArrived: true });
             return;
           }

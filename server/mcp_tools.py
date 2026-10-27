@@ -2538,11 +2538,29 @@ class FoxMCPTools:
                 raise ValueError("Pass ref (from content_snapshot), selector, or the element's visible text")
             return {"tabId": tab_id, "ref": ref, "selector": selector, **({"targetName": name} if name else {})}
 
-        async def click_effect(tab_id: int, prep: Dict[str, Any]) -> str:
-            """What a real click changed on the page, from the content script"""
+        async def click_effect(tab_id: int, prep: Dict[str, Any]):
+            """What a real click changed on the page, from the content script,
+            and whether the click reached the page at all"""
             data, error = await page_request({"action": "content.click_effect",
                                               "data": {"tabId": tab_id, "token": prep.get("token")}})
-            return "" if error or not data.get("effect") else f": {data['effect']}"
+            if error:
+                return "", True
+            if data.get("notArrived"):
+                return "", False
+            return (f": {data['effect']}" if data.get("effect") else ""), True
+
+        # Real input that reported success though not one key or pointer press
+        # reached the page (on Windows, a Firefox window behind another one, or
+        # one Firefox does not deliver to). Nothing happened, so scripted
+        # events cannot do it twice.
+        MISSED_NOTE = " (the real input did not reach the page, so scripted events did it)"
+
+        def missed_refusal(action):
+            """Why nothing was done, when the server runs real input only"""
+            if not getattr(self.websocket_server, 'real_input_only', False):
+                return None
+            return (f"Failed to {action}: the real input did not reach the page, so nothing happened. "
+                    "Bring the Firefox window to the front and try again.")
 
         def effect_of(data: Dict[str, Any]) -> str:
             return f": {data['effect']}" if data.get("effect") else ""
@@ -2643,28 +2661,42 @@ class FoxMCPTools:
                                           bidi.click_at(context, prep["from"]["x"], prep["from"]["y"],
                                                         button=2 if right_click else 0,
                                                         clicks=2 if double_click and not right_click else 1))
+                fallback = ""
                 if real is not None:
                     prep, error = real
                     if error:
                         return f"Failed to click: {error}"
-                    return f"{done} {prep.get('target')} at {x},{y} (real input){await click_effect(tab_id, prep)}"
-                if refusal := scripted_refusal("click"):
+                    effect, arrived = await click_effect(tab_id, prep)
+                    if arrived:
+                        return f"{done} {prep.get('target')} at {x},{y} (real input){effect}"
+                    if refusal := missed_refusal("click"):
+                        return refusal
+                    fallback = MISSED_NOTE
+                elif refusal := scripted_refusal("click"):
                     return refusal
                 data, error = await page_request({"action": "content.click", "data": {
                     "tabId": tab_id, **start, "doubleClick": double_click, "rightClick": right_click}})
                 if error:
                     return f"Failed to click: {error}"
-                return f"{done} {data.get('clicked')}{effect_of(data)}"
+                return f"{done} {data.get('clicked')}{effect_of(data)}{fallback}"
             real = await real_input(tab_id, ref, selector, "click", lambda bidi, context, element:
                                     bidi.click(context, element, button=2 if right_click else 0,
                                                clicks=2 if double_click and not right_click else 1),
                                     target_name=text)
+            fallback = ""
             if real is not None:
                 prep, error = real
                 if error:
                     return f"Failed to click: {error}"
-                return f"{done} {prep.get('target')} (real input){await click_effect(tab_id, prep)}"
-            if refusal := scripted_refusal("click"):
+                effect, arrived = await click_effect(tab_id, prep)
+                if arrived:
+                    return f"{done} {prep.get('target')} (real input){effect}"
+                if refusal := missed_refusal("click"):
+                    return refusal
+                fallback = MISSED_NOTE
+                # The element the prep found, so a name is not looked up again
+                ref, selector, text = None, prep.get("selector"), None
+            elif refusal := scripted_refusal("click"):
                 return refusal
             data, error = await page_request({
                 "action": "content.click",
@@ -2673,7 +2705,7 @@ class FoxMCPTools:
             })
             if error:
                 return f"Failed to click: {error}"
-            return f"{done} {data.get('clicked')}{effect_of(data)}"
+            return f"{done} {data.get('clicked')}{effect_of(data)}{fallback}"
 
         # Hover Tool
         @self._tool()
@@ -2825,13 +2857,9 @@ class FoxMCPTools:
                         await real_input(tab_id, None, selector, "key",
                                          lambda bidi, context, element: bidi.press(context, "Enter"))
                     return f"Typed into {checked.get('typed')} (real input)"
-                # Not one key press reached the page (on Windows, a Firefox
-                # window behind another one), so nothing was typed anywhere and
-                # scripted typing does not double it
-                if getattr(self.websocket_server, 'real_input_only', False):
-                    return ("Failed to type: the real key presses did not reach the page, so nothing was "
-                            "typed. Bring the Firefox window to the front and try again.")
-                fallback = " (real key presses did not reach the page, so it was typed with scripted events)"
+                if refusal := missed_refusal("type"):
+                    return refusal
+                fallback = MISSED_NOTE
             elif real is not SCRIPTED_ONLY and (refusal := scripted_refusal("type")):
                 return refusal
             data, error = await page_request({
@@ -2882,13 +2910,20 @@ class FoxMCPTools:
                 await bidi.press(context, key)
 
             real = await real_input(tab_id, ref, selector, "key", press_for_real)
+            fallback = ""
             if real is not None:
                 prep, error = real
                 if error:
                     return f"Failed to press {key}: {error}"
-                copied = await note_copy(copy_before) if COPY_KEYS.match(key) else ""
-                return f"Pressed {key} (real input){copied}"
-            if refusal := scripted_refusal(f"press {key}"):
+                checked, _ = await page_request({"action": "content.real_input_arrived",
+                                                 "data": {"tabId": tab_id, "token": prep["token"]}})
+                if not checked or checked.get("arrived") is not False:
+                    copied = await note_copy(copy_before) if COPY_KEYS.match(key) else ""
+                    return f"Pressed {key} (real input){copied}"
+                if refusal := missed_refusal(f"press {key}"):
+                    return refusal
+                fallback = MISSED_NOTE
+            elif refusal := scripted_refusal(f"press {key}"):
                 return refusal
             data, error = await page_request({
                 "action": "content.press_key",
@@ -2897,7 +2932,7 @@ class FoxMCPTools:
             if error:
                 return f"Failed to press {key}: {error}"
             copied = await note_copy(copy_before) if COPY_KEYS.match(key) else ""
-            return f"Pressed {data.get('pressed')}{copied}"
+            return f"Pressed {data.get('pressed')}{fallback}{copied}"
 
         # Upload Files Tool
         @self._tool()

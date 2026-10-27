@@ -59,7 +59,7 @@ const ACTION_PERMISSIONS = {
   allowRead: ['content.get_text', 'content.get_html', 'content.snapshot', 'tabs.captureVisibleTab'],
   allowInteract: ['content.click', 'content.type', 'content.press_key', 'content.capture_file_input',
     'content.real_input_prep', 'content.check_typed', 'content.real_pointer_prep', 'content.hover', 'content.drag',
-    'content.click_effect'],
+    'content.click_effect', 'content.real_input_arrived'],
   allowScripts: ['content.execute_script'],
   allowUploads: ['content.upload_begin', 'content.upload_chunk', 'content.upload_finish'],
   allowClipboard: ['content.copy_image', 'content.paste', 'content.clipboard_fingerprint'],
