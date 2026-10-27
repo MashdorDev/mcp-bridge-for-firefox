@@ -197,7 +197,7 @@ const outranks = (a, b) => {
 
 function findByName(name) {
   const wanted = name.replace(/\s+/g, ' ').trim().toLowerCase();
-  const modals = frontDialogs(MODALS);
+  const modals = frontDialogs(MODALS).filter(blocksPage);
   let best = null;
   for (const el of document.querySelectorAll(NAMED_ELEMENTS)) {
     const have = nameOf(el);
@@ -266,6 +266,26 @@ function frontDialogs(selector, visible = true) {
   });
 }
 
+// A backdrop: something laid over the whole page, in front of everything else
+function coversPage(el) {
+  if (el === document.documentElement || el === document.body) return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width >= innerWidth * 0.9 && rect.height >= innerHeight * 0.9;
+}
+
+// Whether a dialog shuts out the page behind it, as a modal one does. Some
+// cookie banners say aria-modal yet leave the page usable, so a corner of the
+// page outside the dialog must land on it or on a backdrop.
+function blocksPage(dialog) {
+  if (dialog.matches('dialog:modal')) return true;
+  const rect = dialog.getBoundingClientRect();
+  const corner = [[2, 2], [innerWidth - 3, 2], [2, innerHeight - 3], [innerWidth - 3, innerHeight - 3]]
+    .find(([x, y]) => x < rect.left || x > rect.right || y < rect.top || y > rect.bottom);
+  if (!corner) return true;
+  const hit = document.elementFromPoint(...corner);
+  return Boolean(hit && (dialog.contains(hit) || coversPage(hit)));
+}
+
 // What a person's click on el would land on instead, said in the click's
 // result: an invisible backdrop left by a modal stuck mid-fade took every
 // click on a Save button, and the clicks were reported as done. Checked once
@@ -286,7 +306,9 @@ function coverOf(el) {
   const kind = typeof hit.className === 'string' && hit.className.trim() ? `.${hit.className.trim().split(/\s+/)[0]}` : '';
   let note = `it is covered by ${invisible ? 'an invisible ' : ''}${describe(hit)}${kind}, ` +
     `where a person's click would land`;
-  const dialog = frontDialogs(DIALOGS, false).filter(o => !o.contains(el)).pop();
+  // The dialog the cover belongs to, or the one in front of a backdrop
+  const dialog = frontDialogs(DIALOGS, false)
+    .filter(o => !o.contains(el) && (o.contains(hit) || coversPage(hit))).pop();
   if (dialog) note += `; open in front: ${describe(dialog)}`;
   return note;
 }
@@ -1349,7 +1371,8 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
           .then(() => {
             document.documentElement.setAttribute('data-foxmcp-tab', data.token);
             if (el && data.purpose === 'click') pendingClicks.get(data.token).covered = coverOf(el);
-            const rect = el && el.getBoundingClientRect();
+            // The first line of a link that wraps, as for the cover check
+            const rect = el && (el.getClientRects()[0] || el.getBoundingClientRect());
             sendResponse(el ? {
               selector: `[${REF_ATTR}="${refFor(el)}"]`, target: describe(el), screen: screenInfo(),
               // Real input would click a <select> open into the browser's own
