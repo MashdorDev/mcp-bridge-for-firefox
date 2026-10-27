@@ -344,7 +344,13 @@ async function typeInto(el, text, clear) {
   el.focus();
   if (clear) {
     if (el.isContentEditable) {
-      document.execCommand('selectAll');
+      // selectAll does not stay inside some editors (YouTube Studio's title),
+      // and the new text was added after the old instead of replacing it
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
     } else if (typeof el.select === 'function') {
       el.select();
     }
@@ -354,7 +360,10 @@ async function typeInto(el, text, clear) {
   // In a hidden tab the text goes in at once: nobody is watching, and Firefox
   // throttles its timers so hard that a 300-character text took minutes.
   // Typing animation can also be turned off in the settings
-  const size = document.hidden || !settings.typingAnimated ? Math.max(1, text.length)
+  // Rich editors get the whole text at once too: YouTube Studio's fields
+  // re-render while they suggest @mentions, and every piece typed after that
+  // was lost (36 of 78 characters reached the title).
+  const size = document.hidden || !settings.typingAnimated || el.isContentEditable ? Math.max(1, text.length)
     : Math.max(1, Math.ceil(text.length * TYPE_STEP_MS / TYPE_ANIMATION_MS));
   const pieces = [];
   for (let i = 0; i < text.length; i += size) pieces.push(text.slice(i, i + size));
@@ -379,7 +388,7 @@ async function typeInto(el, text, clear) {
     }
     showTypingField(el);
     if (i === pieces.length - 1) {
-      checkTyped(el, text);
+      checkTyped(el, text, clear);
       return;
     }
   }
@@ -399,13 +408,17 @@ async function typeInto(el, text, clear) {
 
 // Whether the text that was typed is all there. An editor that drops or replaces
 // part of it would otherwise report success with half a message in the field.
-function checkTyped(el, text) {
+function checkTyped(el, text, cleared) {
   const normalise = value => value.replace(/\s+/g, ' ').trim();
   const now = normalise(el.isContentEditable ? el.innerText : el.value || '');
   const wanted = normalise(text);
   if (!now.includes(wanted)) {
     throw new Error(`Only part of the text arrived in the field (it now holds ${now.length} characters, ` +
       `the text was ${wanted.length})`);
+  }
+  // A clear that did not take leaves the old text beside the new
+  if (cleared && now !== wanted) {
+    throw new Error(`The field was not cleared: it holds ${now.length} characters, the text was ${wanted.length}`);
   }
 }
 
@@ -1297,7 +1310,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'checkTypedText': {
         const el = findTarget(data);
         try {
-          checkTyped(el, data.text);
+          checkTyped(el, data.text, data.clear);
           showTypingField(el);
           sendResponse({ typed: describe(el) });
         } catch (error) {

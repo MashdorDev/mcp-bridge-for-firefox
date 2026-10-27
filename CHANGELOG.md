@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Rich text fields get the whole text.** `content_type` puts the text into a contenteditable field in one step instead of a few characters at a time. YouTube Studio's title and description re-render while they suggest @mentions, and the pieces typed after that were lost: 36 of 78 characters reached the title. Inputs and textareas are still typed visibly.
+- **`clear` replaces what a rich text field holds.** It selects the field's own contents instead of running `selectAll`, which did not stay inside YouTube Studio's title, so the new title was added after the old one. A clear that leaves other text in the field is now reported as an error, with real input too.
+
 ## [1.11.1] - 2026-10-14
 
 ### Fixed
