@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Each `content_execute_script` call has its own scope.** A `const` from one call no longer makes the next fail with "redeclaration of const", and a top-level `return` or `await` works (the script then runs in an async function and its `return` is the result). Scripts that end in an expression return it as before.
 - **Rich text fields get the whole text.** `content_type` puts the text into a contenteditable field in one step instead of a few characters at a time. YouTube Studio's title and description re-render while they suggest @mentions, and the pieces typed after that were lost: 36 of 78 characters reached the title. Inputs and textareas are still typed visibly.
 - **`clear` replaces what a rich text field holds.** It selects the whole editor's contents instead of running `selectAll`, which did not stay inside YouTube Studio's title, so the new title was added after the old one. A target that is one paragraph of an editor clears the whole editor, as before. A clear that leaves other text in the field is now reported as an error, with real input too; zero-width filler characters that editors keep beside the caret do not count.
 - **Appending to an input or textarea starts at the end.** With `clear=False` the first characters went in at the start of the field, where focus leaves the caret, and the rest at the end.
