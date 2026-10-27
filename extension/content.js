@@ -347,7 +347,39 @@ function editingHost(el) {
   return host;
 }
 
+// A <select> takes no text, so typing into one picks the option whose label
+// or value is the text, as a person choosing it from the list would. Labels
+// win: they are what a snapshot shows, and a value can be another option's
+// label (<option value="8">6</option><option value="10">8</option>). Setting
+// it as an input's value threw "'set value' called on an object that does not
+// implement interface HTMLInputElement".
+function chooseOption(select, text, clear) {
+  if (select.disabled) throw new Error('The list is disabled');
+  const options = [...select.options];
+  const label = text.trim().toLowerCase();
+  const option = options.find(o => o.label.trim().toLowerCase() === label) || options.find(o => o.value === text);
+  // A disabled option (sold out, say) is one a person cannot pick, and the form
+  // leaves it out of what it sends
+  if (option?.disabled || option?.parentElement.closest('optgroup[disabled]')) {
+    throw new Error(`The option "${option.label.trim()}" is disabled`);
+  }
+  if (!option) {
+    const names = options.map(o => `"${o.label.trim()}"`);
+    throw new Error(`The list has no option "${text}". Its options: ${names.slice(0, 40).join(', ')}` +
+      (names.length > 40 ? `, and ${names.length - 40} more` : ''));
+  }
+  select.scrollIntoView({ block: 'center' });
+  select.focus();
+  if (select.multiple && clear) options.forEach(o => { o.selected = false; });
+  option.selected = true;
+  select.dispatchEvent(new Event('input', { bubbles: true }));
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  showTypingField(select);
+  return select;
+}
+
 async function typeInto(el, text, clear) {
+  if (el instanceof HTMLSelectElement) return chooseOption(el, text, clear);
   // Found before typing: replacing the editor's contents can remove el itself
   const host = el.isContentEditable ? editingHost(el) : el;
   el.scrollIntoView({ block: 'center' });
@@ -441,10 +473,42 @@ function checkTyped(el, text, cleared) {
   }
 }
 
+// Inputs a typed character does not go into. Date and time inputs take keys
+// segment by segment, which insertText cannot do.
+const NOT_TEXT_INPUTS = /^(button|checkbox|color|file|hidden|image|radio|range|reset|submit|date|datetime-local|month|time|week)$/;
+
+const fieldText = el => el.isContentEditable ? el.textContent : el.value;
+
 function pressKey(el, key) {
   const init = { key, bubbles: true, cancelable: true, composed: true };
+  // A synthetic key event types nothing, so a printable key the page lets
+  // through goes in the way content_type puts text in. Read-only fields (many
+  // comboboxes) handle keys themselves.
+  const typing = [...key].length === 1 && !el.readOnly && !el.disabled && (el.isContentEditable ||
+    el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !NOT_TEXT_INPUTS.test(el.type)));
+  // A paragraph of an editor cannot take focus; the editor it belongs to can
+  const field = el.isContentEditable ? editingHost(el) : el;
+  const focused = () => document.activeElement === field || field.contains(document.activeElement);
+  if (typing && !focused()) {
+    field.focus();
+    // A field that cannot take focus would have the key typed into whichever one has it
+    if (!focused()) throw new Error(`${describe(el)} cannot take focus, so "${key}" was not typed`);
+    // Focus leaves the caret at the start; a key pressed on a field goes after its text
+    if (el.selectionStart != null) el.setSelectionRange(el.value.length, el.value.length);
+  }
+  // Focusing an editor does not move the selection into it: it stayed in the
+  // last editor typed into, and the key went there
+  if (typing && el.isContentEditable && !field.contains(window.getSelection().anchorNode)) caretToEnd(field);
+  const before = typing ? fieldText(field) : null;
   const notCancelled = el.dispatchEvent(new KeyboardEvent('keydown', init));
+  let refused = false;
+  // A page that writes the key itself on keydown, or moves focus on (a box per
+  // digit of a code), has handled it; typing it too would double it
+  if (typing && notCancelled && focused() && fieldText(field) === before) {
+    refused = !document.execCommand('insertText', false, key);
+  }
   el.dispatchEvent(new KeyboardEvent('keyup', init));
+  if (refused) throw new Error(`The field did not accept "${key}"`);
   // A synthetic Enter does not submit a form, so do what the browser would.
   if (key === 'Enter' && notCancelled && el.form && el.tagName !== 'TEXTAREA') {
     el.form.requestSubmit();
@@ -1240,6 +1304,9 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const rect = el && el.getBoundingClientRect();
             sendResponse(el ? {
               selector: `[${REF_ATTR}="${refFor(el)}"]`, target: describe(el), screen: screenInfo(),
+              // Real input would click a <select> open into the browser's own
+              // list, where typed keys do not reach the page
+              scripted: data.purpose === 'type' && el instanceof HTMLSelectElement,
               point: { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) },
             } : { target: 'the page', screen: screenInfo() });
           })
@@ -1341,8 +1408,12 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'pressKey': {
         const el = hasTarget(data) ? findTarget(data) : (document.activeElement || document.body);
         showOverlay('typing');
-        pressKey(el, data.key);
-        sendResponse({ pressed: data.key });
+        try {
+          pressKey(el, data.key);
+          sendResponse({ pressed: data.key });
+        } catch (error) {
+          sendResponse({ error: error.message });
+        }
         break;
       }
 
