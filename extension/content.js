@@ -339,22 +339,46 @@ function caretToEnd(el) {
   selection.addRange(range);
 }
 
+// The editor a target belongs to: a ref or selector can name one paragraph of
+// it, and clearing or checking that paragraph alone left the rest of a draft
+function editingHost(el) {
+  let host = el;
+  while (host.parentElement?.isContentEditable) host = host.parentElement;
+  return host;
+}
+
 async function typeInto(el, text, clear) {
+  // Found before typing: replacing the editor's contents can remove el itself
+  const host = el.isContentEditable ? editingHost(el) : el;
   el.scrollIntoView({ block: 'center' });
   el.focus();
   if (clear) {
     if (el.isContentEditable) {
-      document.execCommand('selectAll');
+      // selectAll does not stay inside some editors (YouTube Studio's title),
+      // and the new text was added after the old instead of replacing it
+      const range = document.createRange();
+      range.selectNodeContents(host);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
     } else if (typeof el.select === 'function') {
       el.select();
     }
   } else if (el.isContentEditable) {
     caretToEnd(el);
+  } else {
+    // Focus leaves the caret at the start, and the first piece went in there.
+    // Email and number inputs have no selection (selectionStart is null) and
+    // throw on setSelectionRange.
+    if (el.selectionStart != null) el.setSelectionRange(el.value.length, el.value.length);
   }
   // In a hidden tab the text goes in at once: nobody is watching, and Firefox
   // throttles its timers so hard that a 300-character text took minutes.
   // Typing animation can also be turned off in the settings
-  const size = document.hidden || !settings.typingAnimated ? Math.max(1, text.length)
+  // Rich editors get the whole text at once too: YouTube Studio's fields
+  // re-render while they suggest @mentions, and every piece typed after that
+  // was lost (36 of 78 characters reached the title).
+  const size = document.hidden || !settings.typingAnimated || el.isContentEditable ? Math.max(1, text.length)
     : Math.max(1, Math.ceil(text.length * TYPE_STEP_MS / TYPE_ANIMATION_MS));
   const pieces = [];
   for (let i = 0; i < text.length; i += size) pieces.push(text.slice(i, i + size));
@@ -371,23 +395,24 @@ async function typeInto(el, text, clear) {
       // selected, and the next piece would then replace it, so only the last
       // few dozen characters of a long text arrived.
       if (el.isContentEditable) caretToEnd(el);
-      else el.setSelectionRange?.(el.value.length, el.value.length);
+      else if (el.selectionStart != null) el.setSelectionRange(el.value.length, el.value.length);
     }
     if (!document.execCommand('insertText', false, pieces[i])) {
       if (i > 0) throw new Error('The field stopped accepting text partway through typing');
       break;
     }
-    showTypingField(el);
+    showTypingField(host);
     if (i === pieces.length - 1) {
-      checkTyped(el, text);
-      return;
+      checkTyped(host, text, clear);
+      return host;
     }
   }
   if (el.isContentEditable) {
-    el.textContent = clear ? text : el.textContent + text;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    showTypingField(el);
-    return;
+    if (clear) host.textContent = text;
+    else el.textContent += text;
+    host.dispatchEvent(new Event('input', { bubbles: true }));
+    showTypingField(host);
+    return host;
   }
   const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
@@ -395,17 +420,24 @@ async function typeInto(el, text, clear) {
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
   showTypingField(el);
+  return el;
 }
 
 // Whether the text that was typed is all there. An editor that drops or replaces
 // part of it would otherwise report success with half a message in the field.
-function checkTyped(el, text) {
-  const normalise = value => value.replace(/\s+/g, ' ').trim();
-  const now = normalise(el.isContentEditable ? el.innerText : el.value || '');
+function checkTyped(el, text, cleared) {
+  // Editors keep zero-width fillers beside the caret (CKEditor's \u2060,
+  // Froala's \u200B), which \s does not match
+  const normalise = value => value.replace(/[\u200B-\u200D\u2060]/g, '').replace(/\s+/g, ' ').trim();
+  const now = normalise(el.isContentEditable ? editingHost(el).innerText : el.value || '');
   const wanted = normalise(text);
   if (!now.includes(wanted)) {
     throw new Error(`Only part of the text arrived in the field (it now holds ${now.length} characters, ` +
       `the text was ${wanted.length})`);
+  }
+  // A clear that did not take leaves the old text beside the new
+  if (cleared && now !== wanted) {
+    throw new Error(`The field was not cleared: it holds ${now.length} characters, the text was ${wanted.length}`);
   }
 }
 
@@ -1181,9 +1213,9 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
         showOverlay('typing');
         moveCursorTo(el, true)
           .then(() => typeInto(el, data.text, data.clear !== false))
-          .then(() => {
-            if (data.submit) pressKey(el, 'Enter');
-            sendResponse({ typed: describe(el) });
+          .then(field => {
+            if (data.submit) pressKey(field, 'Enter');
+            sendResponse({ typed: describe(field) });
           })
           .catch(error => sendResponse({ error: error.message }));
         break;
@@ -1297,7 +1329,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'checkTypedText': {
         const el = findTarget(data);
         try {
-          checkTyped(el, data.text);
+          checkTyped(el, data.text, data.clear);
           showTypingField(el);
           sendResponse({ typed: describe(el) });
         } catch (error) {

@@ -2801,7 +2801,7 @@ class FoxMCPTools:
                 found = {"tabId": tab_id, "ref": None, "selector": prep.get("selector")}
                 checked, error = await page_request({
                     "action": "content.check_typed",
-                    "data": {**found, "text": text}
+                    "data": {**found, "text": text, "clear": clear}
                 })
                 if error:
                     return f"Failed to type: {error}"
