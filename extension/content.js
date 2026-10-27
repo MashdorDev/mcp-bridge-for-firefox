@@ -69,7 +69,7 @@ function snapshot(maxElements) {
 function targetPoint({ ref, selector, targetName, x, y }) {
   if (ref || selector || targetName) {
     const el = findTarget({ ref, selector, targetName });
-    el.scrollIntoView({ block: 'center', inline: 'center' });
+    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
     const rect = el.getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, el, size: Math.min(rect.width, rect.height) };
   }
@@ -184,9 +184,9 @@ const ACTIVE_ELEMENTS = 'a[href], button, input, select, textarea, summary, [rol
   '[role=option], [role=tab], [role=checkbox], [role=radio], [role=switch], [contenteditable=""], [contenteditable="true"]';
 
 // An element found by the name a person sees on it, the way they would point
-// at it: shown before hidden, inside an open dialog or menu before the page
-// behind it (a person cannot reach past a modal, and "Editor" matched a table
-// cell behind the dialog instead of the radio in it), an exact name before one that starts or merely
+// at it: shown before hidden, inside a modal dialog in front before the page
+// behind it (a person cannot reach past it, and "Editor" matched a table cell
+// behind the dialog instead of the option in it), an exact name before one that starts or merely
 // contains it, something that can be clicked or typed into before plain text,
 // and the innermost element before the boxes around it
 // Compares two rankings place by place, the first difference deciding
@@ -197,15 +197,15 @@ const outranks = (a, b) => {
 
 function findByName(name) {
   const wanted = name.replace(/\s+/g, ' ').trim().toLowerCase();
-  const overlays = [...document.querySelectorAll(OVERLAYS)].filter(isShown);
+  const modals = frontDialogs(MODALS);
   let best = null;
   for (const el of document.querySelectorAll(NAMED_ELEMENTS)) {
     const have = nameOf(el);
     if (!have) continue;
     const match = have === wanted ? 3 : have.startsWith(wanted) ? 2 : have.includes(wanted) ? 1 : 0;
     if (!match) continue;
-    const inOverlay = overlays.some(o => o.contains(el)) ? 1 : 0;
-    const score = [isShown(el) ? 1 : 0, inOverlay, match, el.matches(ACTIVE_ELEMENTS) ? 1 : 0,
+    const inModal = modals.some(o => o.contains(el)) ? 1 : 0;
+    const score = [isShown(el) ? 1 : 0, inModal, match, el.matches(ACTIVE_ELEMENTS) ? 1 : 0,
       -el.getElementsByTagName('*').length];
     if (!best || outranks(score, best.score)) best = { el, score };
   }
@@ -251,15 +251,33 @@ function pageState(el) {
 
 const pendingClicks = new Map();
 
+const DIALOGS = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
+const MODALS = 'dialog:modal, [aria-modal=true]';
+
+// Dialogs that are open and in front: what is at a dialog's own centre is part
+// of it. Hit testing ignores opacity, so a dialog stuck invisible mid-fade still
+// counts; `visible` leaves those out, for ranking what a person can see.
+function frontDialogs(selector, visible = true) {
+  return [...document.querySelectorAll(selector)].filter(dialog => {
+    if (!isShown(dialog) || (visible && !dialog.checkVisibility?.({ opacityProperty: true }))) return false;
+    const rect = dialog.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return Boolean(hit && dialog.contains(hit));
+  });
+}
+
 // What a person's click on el would land on instead, said in the click's
 // result: an invisible backdrop left by a modal stuck mid-fade took every
 // click on a Save button, and the clicks were reported as done. Checked once
 // el is scrolled into view, before the click.
 function coverOf(el) {
-  const rect = el.getBoundingClientRect();
-  if (!rect.width || !rect.height) return '';
+  // A link that wraps has a box around both lines, whose centre can be other
+  // text; a real click goes to the first line
+  const rect = el.getClientRects()[0];
+  if (!rect || !rect.width || !rect.height) return '';
   const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-  if (!hit || hit === el || el.contains(hit) || hit.contains(el) || hit.control === el) return '';
+  // A click anywhere in a field's label (a hidden checkbox behind a toggle) is a click on the field
+  if (!hit || hit === el || el.contains(hit) || hit.contains(el) || hit.closest('label')?.control === el) return '';
   let invisible = false;
   for (let node = hit; node && !invisible; node = node.parentElement) {
     const style = getComputedStyle(node);
@@ -268,7 +286,7 @@ function coverOf(el) {
   const kind = typeof hit.className === 'string' && hit.className.trim() ? `.${hit.className.trim().split(/\s+/)[0]}` : '';
   let note = `it is covered by ${invisible ? 'an invisible ' : ''}${describe(hit)}${kind}, ` +
     `where a person's click would land`;
-  const dialog = [...document.querySelectorAll(OVERLAYS)].filter(o => isShown(o) && !o.contains(el)).pop();
+  const dialog = frontDialogs(DIALOGS, false).filter(o => !o.contains(el)).pop();
   if (dialog) note += `; open in front: ${describe(dialog)}`;
   return note;
 }
@@ -303,7 +321,7 @@ async function clickEffect(before) {
 // a folder in Google Drive; a lone dblclick event is ignored there.
 // clicks: 1, 2 for a double-click, or 'right' for a right-click
 function clickElement(el, clicks = 1) {
-  el.scrollIntoView({ block: 'center', inline: 'center' });
+  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
   const rect = el.getBoundingClientRect();
   const init = {
     bubbles: true, cancelable: true, composed: true, view: window, button: 0,
@@ -1088,7 +1106,7 @@ function humanPath(from, to, targetSize) {
 }
 
 async function moveCursorTo(el, press) {
-  el.scrollIntoView({ block: 'center', inline: 'center' });
+  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
   const rect = el.getBoundingClientRect();
   const to = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   return moveCursorToPoint(to, Math.min(rect.width, rect.height), press);
