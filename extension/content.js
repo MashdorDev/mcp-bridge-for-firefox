@@ -602,14 +602,15 @@ async function commitField(el, refocus) {
   field.addEventListener('change', noteChange, { once: true });
   field.addEventListener('blur', noteBlur, { once: true });
   field.blur();
-  field.removeEventListener('change', noteChange);
-  field.removeEventListener('blur', noteBlur);
   // In a window that is not in front, which is how agents mostly drive
-  // Firefox, blur() fires nothing and the field keeps focus
+  // Firefox, blur() fires nothing. Firefox still fires its own change while
+  // it handles the blur dispatched here, so noteChange stays on until after.
   if (!blurred) {
     field.dispatchEvent(new FocusEvent('blur'));
     field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
   }
+  field.removeEventListener('change', noteChange);
+  field.removeEventListener('blur', noteBlur);
   // chooseOption already sent a <select> its change
   if (field instanceof HTMLSelectElement) return null;
   // Firefox fires change on blur only for edits it counts as the user's
