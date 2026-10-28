@@ -838,8 +838,9 @@ function shapeAt(x, y) {
 function overlayRoot() {
   let host = document.getElementById(OVERLAY_ID);
   // An overlay left by an older version of the add-on, from before it was
-  // updated in a tab that stayed open, lacks the parts this one drives.
-  if (host && !host.shadowRoot?.querySelector('.pointer .s-point')) {
+  // updated in a tab that stayed open, lacks the parts this one drives, or
+  // has its styles in a <style> element a strict CSP blocks.
+  if (host && (!host.shadowRoot?.querySelector('.pointer .s-point') || !host.shadowRoot.adoptedStyleSheets.length)) {
     host.remove();
     host = null;
   }
