@@ -62,6 +62,8 @@ COPY_KEYS = re.compile(r"^(control|ctrl|meta|command)\+(c|x|insert)$", re.IGNORE
 PASTE_KEYS = re.compile(r"^((control|ctrl|meta|command)(\+shift)?\+v|shift\+insert)$", re.IGNORECASE)
 # How long an app may take to put a copy on the clipboard after the keys
 COPY_WAIT_S = 1.5
+# A key held with Control, Alt or Meta, which the browser may take for itself
+MODIFIED_KEY = re.compile(r"(^|\+)(control|ctrl|alt|meta|command)\+", re.IGNORECASE)
 # real_input's answer for a target only the scripted path can work
 SCRIPTED_ONLY = object()
 
@@ -2538,11 +2540,22 @@ class FoxMCPTools:
                 raise ValueError("Pass ref (from content_snapshot), selector, or the element's visible text")
             return {"tabId": tab_id, "ref": ref, "selector": selector, **({"targetName": name} if name else {})}
 
+        # Real input can report success while the page got nothing (on
+        # Windows, a Firefox window behind another one, or one Firefox does not
+        # deliver to). It is said, never redone: the input may still have
+        # landed where the page cannot see it (an iframe, the browser itself,
+        # another window), and doing it again could pay or send twice.
+        NOT_SEEN = ("; but the page showed no sign of a real {what} press, so it may not have "
+                    "arrived (is the Firefox window behind another one?). Check before doing it again")
+
         async def click_effect(tab_id: int, prep: Dict[str, Any]) -> str:
             """What a real click changed on the page, from the content script"""
             data, error = await page_request({"action": "content.click_effect",
                                               "data": {"tabId": tab_id, "token": prep.get("token")}})
-            return "" if error or not data.get("effect") else f": {data['effect']}"
+            if error:
+                return ""
+            effect = f": {data['effect']}" if data.get("effect") else ""
+            return effect + (NOT_SEEN.format(what="pointer") if data.get("notArrived") else "")
 
         def effect_of(data: Dict[str, Any]) -> str:
             return f": {data['effect']}" if data.get("effect") else ""
@@ -2814,7 +2827,7 @@ class FoxMCPTools:
                 found = {"tabId": tab_id, "ref": None, "selector": prep.get("selector")}
                 checked, error = await page_request({
                     "action": "content.check_typed",
-                    "data": {**found, "text": text, "clear": clear}
+                    "data": {**found, "text": text, "clear": clear, "token": prep["token"]}
                 })
                 if error:
                     return f"Failed to type: {error}"
@@ -2877,7 +2890,15 @@ class FoxMCPTools:
                 if error:
                     return f"Failed to press {key}: {error}"
                 copied = await note_copy(copy_before) if COPY_KEYS.match(key) else ""
-                return f"Pressed {key} (real input){copied}"
+                # Firefox keeps some combinations for itself (Control+t), and
+                # those never reach the page anyway
+                unseen = ""
+                if not MODIFIED_KEY.search(key):
+                    checked, _ = await page_request({"action": "content.real_input_arrived",
+                                                     "data": {"tabId": tab_id, "token": prep["token"]}})
+                    if checked and checked.get("arrived") is False:
+                        unseen = NOT_SEEN.format(what="key")
+                return f"Pressed {key} (real input){copied}{unseen}"
             if refusal := scripted_refusal(f"press {key}"):
                 return refusal
             data, error = await page_request({

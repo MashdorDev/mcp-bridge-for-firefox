@@ -250,6 +250,45 @@ function pageState(el) {
 }
 
 const pendingClicks = new Map();
+// Real key or pointer events the page has had since real input was prepared.
+// None at all is a sign the input never reached the page (on Windows, a
+// window behind another one, or one Firefox does not deliver to), which the
+// result then says. Only a sign: input can land where this page cannot see it
+// (an iframe, the browser itself), so it is never done again because of it.
+// Windows typing posts characters without a key down, hence keypress and
+// beforeinput beside keydown.
+const realInputWatches = new Map();
+const REAL_INPUT_WATCH_MS = 30000;
+const LATE_INPUT_MS = 1000;
+const REAL_EVENTS = { keys: ['keydown', 'keypress', 'beforeinput'], pointer: ['pointerdown', 'mousedown', 'click'] };
+
+function watchRealInput(token, kind) {
+  const watch = { count: 0 };
+  const count = event => { if (event.isTrusted) watch.count++; };
+  for (const type of REAL_EVENTS[kind]) window.addEventListener(type, count, true);
+  // A question that never comes (an older server, a failed real input) stops it too
+  const timer = setTimeout(() => watch.stop(), REAL_INPUT_WATCH_MS);
+  watch.stop = () => {
+    for (const type of REAL_EVENTS[kind]) window.removeEventListener(type, count, true);
+    clearTimeout(timer);
+    realInputWatches.delete(token);
+  };
+  realInputWatches.set(token, watch);
+}
+
+// Input aimed into a frame is seen by the frame's document, not this one
+const inFrame = el => el instanceof HTMLIFrameElement || el instanceof HTMLFrameElement ||
+  el instanceof HTMLObjectElement || el instanceof HTMLEmbedElement;
+
+async function realInputArrived(token) {
+  const watch = realInputWatches.get(token);
+  if (!watch) return null;
+  for (let waited = 0; !watch.count && waited < LATE_INPUT_MS; waited += 100) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  watch.stop();
+  return watch.count > 0;
+}
 
 const DIALOGS = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
 const MODALS = 'dialog:modal, [aria-modal=true]';
@@ -1361,6 +1400,9 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'realInputPrep': {
         const el = hasTarget(data) ? findTarget(data) : null;
         if (data.purpose === 'click') pendingClicks.set(data.token, pageState(el));
+        const watched = { click: el && 'pointer', key: !inFrame(el || document.activeElement) && 'keys',
+          type: el && !(el instanceof HTMLSelectElement) && 'keys' }[data.purpose];
+        if (watched && !(el && inFrame(el))) watchRealInput(data.token, watched);
         showOverlay(data.purpose === 'type' ? 'typing' : 'clicking');
         if (el && data.purpose === 'click' && agentLabel === 'Clicking') {
           const name = (el.getAttribute('aria-label') || el.innerText || el.value || el.title || '')
@@ -1421,7 +1463,10 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const from = targetPoint(data.from);
           const to = data.to ? targetPoint(data.to) : null;
           const drag = data.purpose === 'drag';
-          if (data.purpose === 'click') pendingClicks.set(data.token, pageState(from.el));
+          if (data.purpose === 'click') {
+            pendingClicks.set(data.token, pageState(from.el));
+            if (!inFrame(from.el)) watchRealInput(data.token, 'pointer');
+          }
           const dragAndDrop = drag && !data.button && usesPageDragAndDrop(from.el);
           showOverlay(drag ? 'grab' : 'clicking');
           moveCursorToPoint(from, from.size, data.purpose === 'click' || drag)
@@ -1456,23 +1501,31 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'clickEffect': {
         const before = pendingClicks.get(data.token);
         pendingClicks.delete(data.token);
-        if (!before) {
-          sendResponse({ effect: '' });
-          break;
-        }
-        clickEffect(before).then(effect => sendResponse({ effect }));
+        realInputArrived(data.token).then(async arrived => ({
+          effect: before ? await clickEffect(before) : '',
+          notArrived: arrived === false,
+        })).then(sendResponse, error => sendResponse({ error: error.message }));
+        break;
+      }
+
+      case 'realInputArrived': {
+        realInputArrived(data.token).then(arrived => sendResponse({ arrived }));
         break;
       }
 
       case 'checkTypedText': {
         const el = findTarget(data);
-        try {
-          checkTyped(el, data.text, data.clear);
+        realInputArrived(data.token).then(arrived => {
+          try {
+            checkTyped(el, data.text, data.clear);
+          } catch (error) {
+            throw arrived === false ? new Error('The page got no real key presses, so the text most likely ' +
+              'did not arrive (is the Firefox window behind another one?). Check the page before typing again: ' +
+              'a field that hands focus to an editor in a frame gets keys this page cannot see') : error;
+          }
           showTypingField(el);
           sendResponse({ typed: describe(el) });
-        } catch (error) {
-          sendResponse({ error: error.message });
-        }
+        }).catch(error => sendResponse({ error: error.message }));
         break;
       }
 
