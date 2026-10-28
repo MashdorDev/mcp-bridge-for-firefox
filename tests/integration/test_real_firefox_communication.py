@@ -83,35 +83,39 @@ class TestRealFirefoxCommunication:
             success = firefox.setup_and_start_firefox(headless=True, skip_on_failure=False)
             assert success, "Firefox setup and extension installation should succeed"
 
-            # Verify SQLite storage was created and configured
-            import sqlite3
+            # Verify SQLite storage was created and configured. A temporary
+            # add-on writes it from its background script after the install
+            # returns, so give that a moment.
             storage_db_path = os.path.join(firefox.profile_dir, 'storage-sync-v2.sqlite')
+            result = None
+            deadline = time.time() + 15
+            while result is None and time.time() < deadline:
+                if os.path.exists(storage_db_path):
+                    conn = sqlite3.connect(storage_db_path)
+                    try:
+                        result = conn.execute(
+                            "SELECT data FROM storage_sync_data WHERE ext_id = ?",
+                            ("foxmcp@dorzairi.dev",)
+                        ).fetchone()
+                    except sqlite3.OperationalError:
+                        pass  # the table is not there yet
+                    finally:
+                        conn.close()
+                if result is None:
+                    time.sleep(0.5)
             assert os.path.exists(storage_db_path), "SQLite storage database should be created"
+            assert result is not None, "Extension configuration should exist in SQLite storage"
 
-            # Read and verify configuration from SQLite
-            conn = sqlite3.connect(storage_db_path)
-            try:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT data FROM storage_sync_data WHERE ext_id = ?",
-                    ("foxmcp@dorzairi.dev",)
-                )
-                result = cursor.fetchone()
-                assert result is not None, "Extension configuration should exist in SQLite storage"
+            config = json.loads(result[0])
 
-                config = json.loads(result[0])
+            assert config['hostname'] == 'localhost', "Hostname should be configured"
+            assert config['testPort'] == test_port, f"Test port should be configured as {test_port}"
+            assert config['testHostname'] == 'localhost', "Test hostname should be configured"
+            assert config['retryInterval'] == 1000, "Retry interval should be configured for testing"
+            assert config['maxRetries'] == 5, "Max retries should be configured for testing"
+            assert config['pingTimeout'] == 2000, "Ping timeout should be configured for testing"
 
-                assert config['hostname'] == 'localhost', "Hostname should be configured"
-                assert config['testPort'] == test_port, f"Test port should be configured as {test_port}"
-                assert config['testHostname'] == 'localhost', "Test hostname should be configured"
-                assert config['retryInterval'] == 1000, "Retry interval should be configured for testing"
-                assert config['maxRetries'] == 5, "Max retries should be configured for testing"
-                assert config['pingTimeout'] == 2000, "Ping timeout should be configured for testing"
-
-                print(f"✓ Extension configuration verified in SQLite: {config}")
-
-            finally:
-                conn.close()
+            print(f"✓ Extension configuration verified in SQLite: {config}")
 
 
 class TestFirefoxIntegrationScenarios:

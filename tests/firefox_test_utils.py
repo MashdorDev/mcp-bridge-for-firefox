@@ -51,15 +51,18 @@ def firefox_enforces_signing(firefox_path):
     Release and beta builds ignore xpinstall.signatures.required, so an unsigned
     XPI dropped into the profile never loads and every test skips. Those get
     the add-on as a temporary one instead, the way web-ext does. A Firefox whose
-    channel cannot be read (macOS keeps it elsewhere) is taken to allow it.
+    channel cannot be read (macOS keeps it elsewhere, Linux distributions start
+    it from a wrapper script) gets one too: a temporary add-on loads on every
+    channel, an unsigned one only on Nightly, Developer Edition and ESR.
     """
+    firefox_path = os.path.expanduser(firefox_path)
     resolved = shutil.which(firefox_path) or firefox_path
     prefs = Path(resolved).resolve().parent / 'defaults' / 'pref' / 'channel-prefs.js'
     try:
         match = re.search(r'app\.update\.channel"\s*,\s*"([^"]+)"', prefs.read_text())
     except OSError:
-        return False
-    return bool(match) and match.group(1) in ('release', 'beta')
+        return True
+    return not match or match.group(1) in ('release', 'beta')
 
 
 class _DebuggerConnection:
@@ -792,7 +795,13 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
                     )
 
             if self.temporary_addon:
-                self._install_temporary_addon()
+                try:
+                    self._install_temporary_addon()
+                except Exception:
+                    # A Firefox left running holds the profile, which then
+                    # cannot be removed
+                    self.stop_firefox()
+                    raise
 
             print(f"✓ Firefox started with test profile (PID: {self.firefox_process.pid})")
             return True
@@ -822,12 +831,16 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
                   source.replace(load_config, f'{load_config}\n  await FOXMCP_TEST_CONFIG;'))
         background.write_text(source, encoding='utf-8')
 
-        deadline = time.time() + FIREFOX_TEST_CONFIG.get('debugger_connect_timeout', 20)
+        deadline = time.time() + FIREFOX_TEST_CONFIG.get('debugger_connect_timeout', 40)
         while True:
             try:
                 connection = _DebuggerConnection(self.debugger_port, timeout=10)
                 break
             except OSError:
+                if self.firefox_process.poll() is not None:
+                    raise RuntimeError(f"Firefox exited (code {self.firefox_process.returncode}) before its "
+                                       f"debugger opened. Firefox said: "
+                                       f"{self._read_stderr_log(os.path.join(self.profile_dir, 'firefox-stderr.log'))}")
                 if time.time() > deadline:
                     raise RuntimeError(f"Firefox's debugger did not open on port {self.debugger_port}")
                 time.sleep(0.5)
@@ -951,6 +964,12 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
         """Stop the Firefox process"""
         if self.firefox_process:
             try:
+                if os.name == 'nt':
+                    # terminate() ends only the main process on Windows; the
+                    # content processes keep the profile open, so it could not
+                    # be removed and a profile was left in Temp on every run
+                    subprocess.run(['taskkill', '/T', '/F', '/PID', str(self.firefox_process.pid)],
+                                   capture_output=True)
                 self.firefox_process.terminate()
                 self.firefox_process.wait(timeout=5)
                 print("✓ Firefox stopped gracefully")
@@ -969,11 +988,19 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
 
         # Always delete the extracted profile directory
         if self.profile_dir and os.path.exists(self.profile_dir):
-            try:
-                shutil.rmtree(self.profile_dir)
-                print("✓ Extracted profile cleaned up")
-            except Exception as e:
-                print(f"⚠ Error cleaning up extracted profile: {e}")
+            # Windows keeps a stopped Firefox's files locked for a moment
+            for attempt in range(10):
+                try:
+                    shutil.rmtree(self.profile_dir)
+                    print("✓ Extracted profile cleaned up")
+                    break
+                except PermissionError as e:
+                    if attempt == 9:
+                        print(f"⚠ Error cleaning up extracted profile: {e}")
+                    time.sleep(0.5)
+                except Exception as e:
+                    print(f"⚠ Error cleaning up extracted profile: {e}")
+                    break
 
         # Unlock the cached compressed profile if it exists
         if self.test_port in self._profile_cache:
