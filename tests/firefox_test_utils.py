@@ -210,7 +210,7 @@ class FirefoxTestManager:
 
             # Check extension is installed and up-to-date
             extensions_dir = os.path.join(profile_path, 'extensions')
-            extension_file = os.path.join(extensions_dir, 'foxmcp@codemud.org.xpi')
+            extension_file = os.path.join(extensions_dir, 'foxmcp@dorzairi.dev.xpi')
             if not os.path.exists(extension_file):
                 return False  # Extension should be installed
 
@@ -246,7 +246,7 @@ class FirefoxTestManager:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT data FROM storage_sync_data WHERE ext_id = ?",
-                ("foxmcp@codemud.org",)
+                ("foxmcp@dorzairi.dev",)
             )
             result = cursor.fetchone()
             conn.close()
@@ -416,7 +416,7 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
         """Pre-configure extension storage before Firefox runs for the first time"""
         try:
             # Create browser extension data directory structure manually
-            storage_dir = os.path.join(self.profile_dir, 'browser-extension-data', 'foxmcp@codemud.org')
+            storage_dir = os.path.join(self.profile_dir, 'browser-extension-data', 'foxmcp@dorzairi.dev')
             os.makedirs(storage_dir, exist_ok=True)
 
             # Create a simple local storage file with test configuration
@@ -454,7 +454,7 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
             print(f"✗ Extension not found: {extension_path}")
             return False
 
-        extension_name = 'foxmcp@codemud.org.xpi'
+        extension_name = 'foxmcp@dorzairi.dev.xpi'
         dest_path = os.path.join(extensions_dir, extension_name)
         shutil.copy2(extension_path, dest_path)
         print(f"✓ Extension copied to test profile: {extension_name}")
@@ -553,7 +553,7 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
             # Use jq to enable the extension
             jq_command = [
                 'jq',
-                '.addons[] |= if .id == "foxmcp@codemud.org" then .userDisabled = false | .active = true else . end',
+                '.addons[] |= if .id == "foxmcp@dorzairi.dev" then .userDisabled = false | .active = true else . end',
                 extensions_json_path
             ]
 
@@ -640,7 +640,7 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
                 # Check if the extension entry exists
                 cursor.execute(
                     "SELECT COUNT(*) FROM storage_sync_data WHERE ext_id = ?",
-                    ("foxmcp@codemud.org",)
+                    ("foxmcp@dorzairi.dev",)
                 )
                 exists = cursor.fetchone()[0] > 0
 
@@ -648,14 +648,14 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
                     # Update existing entry
                     cursor.execute(
                         "UPDATE storage_sync_data SET data = ?, sync_change_counter = sync_change_counter + 1 WHERE ext_id = ?",
-                        (config_json, "foxmcp@codemud.org")
+                        (config_json, "foxmcp@dorzairi.dev")
                     )
                     print("✓ Updated existing extension storage entry")
                 else:
                     # Insert new entry
                     cursor.execute(
                         "INSERT INTO storage_sync_data (ext_id, data, sync_change_counter) VALUES (?, ?, 1)",
-                        ("foxmcp@codemud.org", config_json)
+                        ("foxmcp@dorzairi.dev", config_json)
                     )
                     print("✓ Created new extension storage entry")
 
@@ -958,7 +958,7 @@ def validate_history_item_timestamp(item, field_name="lastVisitTime"):
 
 def _get_extension_xpi_path():
     """Get path to built extension XPI file"""
-    xpi_path = project_root / 'dist' / 'packages' / 'foxmcp@codemud.org.xpi'
+    xpi_path = project_root / 'dist' / 'packages' / 'foxmcp@dorzairi.dev.xpi'
 
     if xpi_path.exists():
         return str(xpi_path)
@@ -966,13 +966,13 @@ def _get_extension_xpi_path():
     # Second try: search upward for the dist directory
     search_path = Path(__file__).resolve().parent
     while search_path != search_path.parent:  # Stop at filesystem root
-        potential_xpi = search_path / 'dist' / 'packages' / 'foxmcp@codemud.org.xpi'
+        potential_xpi = search_path / 'dist' / 'packages' / 'foxmcp@dorzairi.dev.xpi'
         if potential_xpi.exists():
             return str(potential_xpi)
         search_path = search_path.parent
 
     # Third try: alternative location in extension directory
-    alt_path = project_root / 'extension' / 'foxmcp@codemud.org.xpi'
+    alt_path = project_root / 'extension' / 'foxmcp@dorzairi.dev.xpi'
     if alt_path.exists():
         return str(alt_path)
 

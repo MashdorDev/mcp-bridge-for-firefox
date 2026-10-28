@@ -127,11 +127,11 @@ build-extension:
 package: build
 	@echo "Creating distributable packages..."
 	@mkdir -p dist/packages
-	@rm -f dist/packages/foxmcp@codemud.org.xpi dist/packages/foxmcp-server.zip
+	@rm -f dist/packages/foxmcp@dorzairi.dev.xpi dist/packages/foxmcp-server.zip
 	@rm -rf dist/server-package
 
 	# Package extension as XPI for Firefox
-	cd dist/extension && zip -r ../packages/foxmcp@codemud.org.xpi *
+	cd dist/extension && zip -r ../packages/foxmcp@dorzairi.dev.xpi *
 
 	# Package server
 	@mkdir -p dist/server-package
@@ -146,7 +146,7 @@ package: build
 	@echo "✓ Profile cache cleared"
 
 	@echo "📦 Packages created:"
-	@echo "  - dist/packages/foxmcp@codemud.org.xpi"
+	@echo "  - dist/packages/foxmcp@dorzairi.dev.xpi"
 	@echo "  - dist/packages/foxmcp-server.zip"
 
 # Development and Running

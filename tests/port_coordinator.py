@@ -154,7 +154,7 @@ class FirefoxPortCoordinator:
             raise ValueError(f"Could not read coordination file: {coordination_file}")
         
         # Create extension storage directory
-        storage_dir = os.path.join(profile_dir, 'browser-extension-data', 'foxmcp@codemud.org')
+        storage_dir = os.path.join(profile_dir, 'browser-extension-data', 'foxmcp@dorzairi.dev')
         os.makedirs(storage_dir, exist_ok=True)
         
         # Write extension configuration

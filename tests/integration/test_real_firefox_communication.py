@@ -94,7 +94,7 @@ class TestRealFirefoxCommunication:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT data FROM storage_sync_data WHERE ext_id = ?",
-                    ("foxmcp@codemud.org",)
+                    ("foxmcp@dorzairi.dev",)
                 )
                 result = cursor.fetchone()
                 assert result is not None, "Extension configuration should exist in SQLite storage"

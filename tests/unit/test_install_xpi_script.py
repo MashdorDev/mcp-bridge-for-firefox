@@ -21,8 +21,8 @@ import test_imports  # Automatic path setup
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SCRIPT = REPO_ROOT / 'scripts' / 'install-xpi.sh'
-BUILT_XPI = REPO_ROOT / 'dist' / 'packages' / 'foxmcp@codemud.org.xpi'
-EXTENSION_ID = 'foxmcp@codemud.org'
+BUILT_XPI = REPO_ROOT / 'dist' / 'packages' / 'foxmcp@dorzairi.dev.xpi'
+EXTENSION_ID = 'foxmcp@dorzairi.dev'
 SIGNATURES_PREF = 'user_pref("xpinstall.signatures.required", false);'
 
 
