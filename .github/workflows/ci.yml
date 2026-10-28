@@ -192,7 +192,7 @@ jobs:
 
                   # Reaches the bridge and comes back as a result rather than a
                   # protocol error, which is what a stray write to stdout would be.
-                  result = await client.call_tool("tabs_list", {})
+                  result = await client.call_tool("tabs_list", {}, raise_on_error=False)
                   assert "No extension connection" in result.content[0].text
 
           asyncio.run(main())
