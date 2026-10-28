@@ -194,3 +194,40 @@ async def test_browsers_list_tool_marks_the_active_one(server):
         answer = str((await client.call_tool("browsers_select", {"browser": "Lost Tribe"})).get("content"))
         assert "Now acting on Lost Tribe" in answer
         assert server.active_browser == "bbbb2222"
+
+
+@pytest.mark.asyncio
+async def test_browsers_list_waits_for_browsers_right_after_a_restart(server):
+    # After /mcp restarts the server, add-ons take a few seconds to find it;
+    # "No browser is connected" then sent the agent off to debug nothing
+    client = DirectMCPTestClient(server.mcp_tools)
+    await client.connect()
+
+    async def arrive_late():
+        await asyncio.sleep(1.0)
+        ws = await connect_as_extension(uri(server))
+        await hello(ws, "aaaa1111", "Main")
+        return ws
+
+    late = asyncio.create_task(arrive_late())
+    listing = str((await client.call_tool("browsers_list", {})).get("content"))
+    await (await late).close()
+    assert "Connected browsers (1)" in listing
+
+
+@pytest.mark.asyncio
+async def test_browsers_list_says_none_once_the_server_has_been_up_a_while(server):
+    server.listening_since -= 60
+    client = DirectMCPTestClient(server.mcp_tools)
+    await client.connect()
+    listing = str((await client.call_tool("browsers_list", {})).get("content"))
+    assert listing.count("No browser is connected") == 1
+
+
+@pytest.mark.asyncio
+async def test_browsers_list_says_it_is_waiting_when_none_arrive_after_a_restart(server):
+    client = DirectMCPTestClient(server.mcp_tools)
+    await client.connect()
+    listing = str((await client.call_tool("browsers_list", {})).get("content"))
+    assert "Waiting for browsers to reconnect" in listing
+    assert "No browser is connected" not in listing

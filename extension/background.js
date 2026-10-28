@@ -126,6 +126,10 @@ let retryAttempts = 0;
 // client came back. One localhost connection attempt every 30s costs nothing.
 const FAST_RETRIES = 50;
 const SLOW_RETRY_INTERVAL = 30000;
+// The console gets a line when the connection comes up or drops, not one per
+// failed attempt: with the server down, every attempt used to log four lines,
+// and the add-on's console showed nothing else.
+let loggedDown = false;
 
 // Who this browser is, sent to the server on every connection so it can tell
 // several Firefox profiles apart. Kept in storage.local, never storage.sync:
@@ -208,13 +212,16 @@ function connectToMCPServer() {
 
     // Compute WebSocket URL dynamically using current config
     const WS_URL = `ws://${CONFIG.hostname}:${CONFIG.port}`;
-    console.log(`🔗 Connecting to ${WS_URL} (attempt ${retryAttempts + 1})`);
+    console.debug(`Connecting to ${WS_URL} (attempt ${retryAttempts + 1})`);
 
     const socket = new WebSocket(WS_URL);
     websocket = socket;
+    let opened = false;
 
     socket.onopen = () => {
-      console.log('Connected to MCP server');
+      opened = true;
+      loggedDown = false;
+      console.log(`Connected to the MCP server on port ${CONFIG.port}`);
       isConnected = true;
       updateBadge();
       retryAttempts = 0; // Reset retry counter on successful connection
@@ -233,7 +240,7 @@ function connectToMCPServer() {
       await handleMessage(JSON.parse(event.data), socket);
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       // Reconnect only if this socket is still the live one.
       //
       // close() fires this handler for a deliberate disconnect as well, and
@@ -246,7 +253,12 @@ function connectToMCPServer() {
         return;
       }
 
-      console.log('Disconnected from MCP server');
+      if (opened) {
+        console.log(`Lost the MCP server on port ${CONFIG.port} (close code ${event.code}); reconnecting`);
+      } else if (!loggedDown) {
+        console.log(`No MCP server on port ${CONFIG.port} yet; retrying quietly until one starts`);
+      }
+      loggedDown = true;
       isConnected = false;
       updateBadge();
       clearAllMonitors('the connection to the server dropped');
@@ -254,9 +266,8 @@ function connectToMCPServer() {
       scheduleReconnect();
     };
 
-    socket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
+    // The error event carries nothing readable, and onclose follows it
+    socket.onerror = () => {};
   } catch (error) {
     console.error('Failed to connect to MCP server:', error);
     scheduleReconnect();
@@ -331,10 +342,14 @@ function scheduleReconnect() {
     return;
   }
 
-  const delay = retryAttempts > FAST_RETRIES
+  // Another session's server still connected means MCP clients are running,
+  // so this port's server is likely being restarted (/mcp): keep retrying
+  // fast instead of making it wait up to SLOW_RETRY_INTERVAL.
+  const othersUp = [...extraSockets.values()].some(socket => socket.readyState === WebSocket.OPEN);
+  const delay = retryAttempts > FAST_RETRIES && !othersUp
     ? Math.max(CONFIG.retryInterval, SLOW_RETRY_INTERVAL)
     : CONFIG.retryInterval;
-  console.log(`Scheduling reconnection attempt ${retryAttempts} in ${delay}ms`);
+  console.debug(`Scheduling reconnection attempt ${retryAttempts} in ${delay}ms`);
   setTimeout(connectToMCPServer, delay);
 }
 

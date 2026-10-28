@@ -70,6 +70,11 @@ SCRIPTED_ONLY = object()
 REAL_INPUT_MISS = contextvars.ContextVar("real_input_miss", default="")
 # Firefox updates a window's title and a tab's visibility shortly after activating it
 WINDOW_SETTLE_DELAYS = (0.2, 0.4, 0.8)
+# How long after this server starts an add-on may take to find it: the add-on
+# retries every 5 s, or every 30 s once it has been failing for a while
+RECONNECT_WINDOW_S = 35
+# How long browsers_list waits for a browser inside that window
+RECONNECT_WAIT_S = 5
 
 # Where a screenshot given a bare file name is saved, rather than wherever the
 # server happens to run from (a client's project folder)
@@ -2062,10 +2067,24 @@ class FoxMCPTools:
             """
             server = self.websocket_server
             browsers = list(getattr(server, 'browsers', {}).values())
+            since = getattr(server, 'listening_since', None)
+            started_s = time.monotonic() - since if since is not None else None
+            if not browsers and started_s is not None and started_s < RECONNECT_WINDOW_S:
+                # Right after a restart (/mcp) the add-ons have not found this
+                # server yet; give them a moment before saying there are none
+                deadline = time.monotonic() + RECONNECT_WAIT_S
+                while not server.browsers and time.monotonic() < deadline:
+                    await asyncio.sleep(0.25)
+                browsers = list(server.browsers.values())
+                started_s = time.monotonic() - since
             away = ""
             if server.active_browser and server.active_browser not in server.browsers:
                 away = f"\n{server.no_browser_reason()}"
             if not browsers:
+                if started_s is not None and started_s < RECONNECT_WINDOW_S:
+                    return (f"Waiting for browsers to reconnect: this server started {int(started_s)} s ago, "
+                            f"and the add-on can take up to {RECONNECT_WINDOW_S} s to find a new server. "
+                            "Call browsers_list again in a few seconds." + away)
                 return "No browser is connected" + away
 
             lines = []
