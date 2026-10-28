@@ -802,11 +802,13 @@ const CSS_CURSORS = {
 // closed while the button is held
 const HAND_SHAPES = { grab: 'open', grabbing: 'closed', drop: 'closed', nodrop: 'closed' };
 
-function cursorShapeSvg(name, { hot, draw, line }) {
+function cursorShapeSvg(name, { draw, line }) {
   const outline = line ? 'fill="none" stroke="#fff" stroke-width="4.4" stroke-linecap="round"'
     : 'fill="#fff" stroke="#fff" stroke-width="2.8" stroke-linejoin="round"';
-  const inner = line ? 'fill="none" style="stroke:var(--c)" stroke-width="2" stroke-linecap="round"' : 'style="fill:var(--c)"';
-  return `<svg class="cursor shape s-${name}" style="left:${-hot[0]}px;top:${-hot[1]}px" viewBox="0 0 22 22"
+  // Colour and hotspot come from the overlay's sheet: style attributes are
+  // blocked on the same pages as <style> elements
+  const inner = line ? 'class="line" fill="none" stroke-width="2" stroke-linecap="round"' : 'class="fill"';
+  return `<svg class="cursor shape s-${name}" viewBox="0 0 22 22"
     xmlns="http://www.w3.org/2000/svg"><g ${outline}>${draw}</g><g ${inner}>${draw}</g></svg>`;
 }
 
@@ -846,8 +848,11 @@ function overlayRoot() {
     host.id = OVERLAY_ID;
     host.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;opacity:0;';
     const root = host.attachShadow({ mode: 'open' });
-    root.innerHTML = `
-      <style>
+    // A constructed sheet, not a <style> element: pages whose CSP limits
+    // style-src (Teams) block the element, and the overlay drew as plain
+    // serif text with a cursor the size of a third of the window
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(`
         :host { transition: opacity .4s; --c: rgb(217,119,87); }
         :host(.no-border) .glow, :host(.no-label) .label, :host(.no-cursor) .pointer { display:none; }
         :host(.label-top) .label { bottom:auto; top:14px; }
@@ -879,6 +884,8 @@ function overlayRoot() {
         @keyframes blink { 50% { opacity:0 } }
         .pointer.working .badge.work { display:block; width:10px; height:10px; border-radius:50%; background:var(--c); animation: dot 1s ease-in-out infinite; }
         .shape { display:none; position:absolute; }
+        .cursor .fill { fill:var(--c); } .cursor .line { stroke:var(--c); }
+        ${Object.entries(CURSOR_SHAPES).map(([name, { hot }]) => `.s-${name} { left:${-hot[0]}px; top:${-hot[1]}px; }`).join(' ')}
         ${Object.keys(CURSOR_SHAPES).map(name => `.pointer[data-shape=${name}] .s-${name}`).join(', ')} { display:block; }
         .pointer.grab .shape { animation: breathe 2.4s ease-in-out infinite; }
         .badge.mark { left:8px; top:8px; width:12px; height:12px; border-radius:50%; border:1.5px solid #fff;
@@ -894,7 +901,9 @@ function overlayRoot() {
           animation:field-pulse 1.2s ease-in-out infinite; }
         @keyframes field-pulse { 50% { box-shadow:0 0 0 2px var(--c), 0 0 4px 1px color-mix(in srgb, var(--c) 30%, transparent); } }
         @media (prefers-reduced-motion: reduce) { * { animation:none !important; } }
-      </style>
+    `);
+    root.adoptedStyleSheets = [sheet];
+    root.innerHTML = `
       <div class="glow"></div>
       <div class="field"></div>
       <div class="label"><span class="dot"></span><span class="text"></span></div>
