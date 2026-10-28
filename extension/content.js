@@ -1520,7 +1520,8 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
             checkTyped(el, data.text, data.clear);
           } catch (error) {
             throw arrived === false ? new Error('The page got no real key presses, so the text most likely ' +
-              'did not arrive (is the Firefox window behind another one?). The field was left as it was') : error;
+              'did not arrive (is the Firefox window behind another one?). Check the page before typing again: ' +
+              'a field that hands focus to an editor in a frame gets keys this page cannot see') : error;
           }
           showTypingField(el);
           sendResponse({ typed: describe(el) });

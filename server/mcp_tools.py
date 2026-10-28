@@ -63,7 +63,7 @@ PASTE_KEYS = re.compile(r"^((control|ctrl|meta|command)(\+shift)?\+v|shift\+inse
 # How long an app may take to put a copy on the clipboard after the keys
 COPY_WAIT_S = 1.5
 # A key held with Control, Alt or Meta, which the browser may take for itself
-MODIFIED_KEY = re.compile(r"^(control|ctrl|alt|meta|command)\+", re.IGNORECASE)
+MODIFIED_KEY = re.compile(r"(^|\+)(control|ctrl|alt|meta|command)\+", re.IGNORECASE)
 # real_input's answer for a target only the scripted path can work
 SCRIPTED_ONLY = object()
 
@@ -2893,7 +2893,7 @@ class FoxMCPTools:
                 # Firefox keeps some combinations for itself (Control+t), and
                 # those never reach the page anyway
                 unseen = ""
-                if not MODIFIED_KEY.match(key):
+                if not MODIFIED_KEY.search(key):
                     checked, _ = await page_request({"action": "content.real_input_arrived",
                                                      "data": {"tabId": tab_id, "token": prep["token"]}})
                     if checked and checked.get("arrived") is False:
