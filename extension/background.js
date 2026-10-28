@@ -286,8 +286,16 @@ function connectToMCPServer() {
 // all of them at once queued the main connection behind them and it never got
 // through.
 const EXTRA_SERVER_SCAN_MS = 15000;
+// A connection to one of them dropping is most often its session restarting
+// the server (/mcp), so for a minute after that its port alone is tried every
+// 3 s. With the full scan every 15 s, and each empty port taking seconds to
+// fail, browsers took up to 30 s to come back to a restarted server.
+const EXTRA_SERVER_RESCAN_MS = 3000;
+const EXTRA_SERVER_RESCAN_FOR_MS = 60000;
 const extraSockets = new Map(); // port -> socket
+const extraServersLost = new Map(); // port -> when its open connection dropped
 let extraScanRunning = false;
+let lastExtraScan = 0;
 
 function connectExtraServer(port) {
   return new Promise(settled => {
@@ -299,14 +307,21 @@ function connectExtraServer(port) {
       return;
     }
     extraSockets.set(port, socket);
+    let opened = false;
     socket.onopen = () => {
+      opened = true;
+      extraServersLost.delete(port);
       console.log(`Connected to an additional MCP server on port ${port}`);
       updateBadge();
       sendHello(socket).catch(error => console.error('Could not send hello:', error));
       settled();
     };
     socket.onmessage = async (event) => handleMessage(JSON.parse(event.data), socket);
-    socket.onclose = () => {
+    socket.onclose = (event) => {
+      if (opened) {
+        extraServersLost.set(port, Date.now());
+        console.log(`Lost the additional MCP server on port ${port} (close code ${event.code})`);
+      }
       if (extraSockets.get(port) === socket) extraSockets.delete(port);
       updateBadge();
       releaseAgentTabsOf(socket);
@@ -316,13 +331,12 @@ function connectExtraServer(port) {
   });
 }
 
-async function scanExtraServers() {
+async function scanExtraServers(ports) {
   if (extraScanRunning) return;
   extraScanRunning = true;
   try {
-    for (let i = 1; i <= settings.extraServerPorts; i++) {
+    for (const port of ports) {
       if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
-      const port = CONFIG.port + i;
       const existing = extraSockets.get(port);
       if (!existing || existing.readyState === WebSocket.CLOSED) await connectExtraServer(port);
     }
@@ -331,7 +345,18 @@ async function scanExtraServers() {
   }
 }
 
-setInterval(scanExtraServers, EXTRA_SERVER_SCAN_MS);
+setInterval(() => {
+  const now = Date.now();
+  if (now - lastExtraScan >= EXTRA_SERVER_SCAN_MS && !extraScanRunning) {
+    lastExtraScan = now;
+    scanExtraServers(Array.from({ length: settings.extraServerPorts }, (_, i) => CONFIG.port + 1 + i));
+    return;
+  }
+  for (const [port, lostAt] of extraServersLost) {
+    if (now - lostAt >= EXTRA_SERVER_RESCAN_FOR_MS) extraServersLost.delete(port);
+  }
+  if (extraServersLost.size) scanExtraServers([...extraServersLost.keys()]);
+}, EXTRA_SERVER_RESCAN_MS);
 
 function scheduleReconnect() {
   retryAttempts++;
@@ -342,11 +367,7 @@ function scheduleReconnect() {
     return;
   }
 
-  // Another session's server still connected means MCP clients are running,
-  // so this port's server is likely being restarted (/mcp): keep retrying
-  // fast instead of making it wait up to SLOW_RETRY_INTERVAL.
-  const othersUp = [...extraSockets.values()].some(socket => socket.readyState === WebSocket.OPEN);
-  const delay = retryAttempts > FAST_RETRIES && !othersUp
+  const delay = retryAttempts > FAST_RETRIES
     ? Math.max(CONFIG.retryInterval, SLOW_RETRY_INTERVAL)
     : CONFIG.retryInterval;
   console.debug(`Scheduling reconnection attempt ${retryAttempts} in ${delay}ms`);

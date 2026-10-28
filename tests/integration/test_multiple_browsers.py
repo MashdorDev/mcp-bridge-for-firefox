@@ -213,6 +213,7 @@ async def test_browsers_list_waits_for_browsers_right_after_a_restart(server):
     listing = str((await client.call_tool("browsers_list", {})).get("content"))
     await (await late).close()
     assert "Connected browsers (1)" in listing
+    assert "- Main (active): id aaaa1111" in listing, "listed before its hello, under a placeholder name"
 
 
 @pytest.mark.asyncio
