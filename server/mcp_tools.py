@@ -2848,10 +2848,13 @@ class FoxMCPTools:
                 })
                 if error:
                     return f"Failed to type: {error}"
-                if submit:
-                    await real_input(tab_id, None, prep.get("selector"), "key",
-                                     lambda bidi, context, element: bidi.press(context, "Enter"))
-                return typed(checked.get('typed'), checked, " (real input)")
+                how = " (real input)"
+                if submit and not checked.get("submitted"):
+                    pressed = await real_input(tab_id, None, prep.get("selector"), "key",
+                                               lambda bidi, context, element: bidi.press(context, "Enter"))
+                    if pressed and pressed is not SCRIPTED_ONLY and pressed[1]:
+                        how += f"; Enter was not pressed: {pressed[1]}"
+                return typed(checked.get('typed'), checked, how)
             if real is not SCRIPTED_ONLY and (refusal := scripted_refusal("type")):
                 return refusal
             data, error = await page_request({

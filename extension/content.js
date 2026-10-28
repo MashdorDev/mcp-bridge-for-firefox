@@ -584,6 +584,10 @@ function checkTyped(el, text, cleared) {
   }
 }
 
+// The field typed into, or a note that the page replaced it, whose ref would
+// lead nowhere
+const typedField = el => el.isConnected ? describe(el) : 'a field the page has since replaced';
+
 // Fields typeInto already sent a change to, which commitField must not repeat
 const changeSent = new WeakSet();
 
@@ -1437,7 +1441,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
               if (field.isConnected || !form) pressKey(field, 'Enter');
               else form.requestSubmit();
             }
-            sendResponse({ typed: describe(field), committed: Boolean(data.commit), emptied });
+            sendResponse({ typed: typedField(field), committed: Boolean(data.commit), emptied });
           })
           .catch(error => sendResponse({ error: error.message }));
         break;
@@ -1574,8 +1578,13 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
               'a field that hands focus to an editor in a frame gets keys this page cannot see') : error;
           }
           showTypingField(el);
+          const form = el.form;
           const emptied = data.commit ? await commitField(el, data.submit) : undefined;
-          sendResponse({ typed: describe(el), committed: Boolean(data.commit), emptied });
+          // A chip input that replaced the field leaves nothing for a real
+          // Enter to reach, so the form is submitted from here instead
+          const submitted = Boolean(data.submit && !el.isConnected && form);
+          if (submitted) form.requestSubmit();
+          sendResponse({ typed: typedField(el), committed: Boolean(data.commit), emptied, submitted });
         }).catch(error => sendResponse({ error: error.message }));
         break;
       }
