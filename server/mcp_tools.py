@@ -2818,9 +2818,13 @@ class FoxMCPTools:
             """
             def typed(into, data, how=""):
                 committed = ""
-                if commit:
+                if commit and not data.get("committed"):
+                    committed = ", but did not leave it: the add-on is too old for commit, update it"
+                elif commit and data.get("emptied") is None:
+                    committed = ", and left it"
+                elif commit:
                     committed = (", and left it; the field emptied, so it likely took the text as an entry"
-                                 if data.get("emptied") else ", and left it; the text is still in the field")
+                                 if data["emptied"] else ", and left it; the text is still in the field")
                 return f"Typed into {into}{how}{committed}"
 
             async def type_for_real(bidi, context, element):
@@ -2839,7 +2843,8 @@ class FoxMCPTools:
                 found = {"tabId": tab_id, "ref": None, "selector": prep.get("selector")}
                 checked, error = await page_request({
                     "action": "content.check_typed",
-                    "data": {**found, "text": text, "clear": clear, "commit": commit, "token": prep["token"]}
+                    "data": {**found, "text": text, "clear": clear, "commit": commit, "submit": submit,
+                             "token": prep["token"]}
                 })
                 if error:
                     return f"Failed to type: {error}"

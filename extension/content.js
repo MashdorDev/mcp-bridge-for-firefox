@@ -489,6 +489,7 @@ function chooseOption(select, text, clear) {
 
 async function typeInto(el, text, clear) {
   if (el instanceof HTMLSelectElement) return chooseOption(el, text, clear);
+  changeSent.delete(el);
   // Found before typing: replacing the editor's contents can remove el itself
   const host = el.isContentEditable ? editingHost(el) : el;
   el.scrollIntoView({ block: 'center' });
@@ -560,6 +561,7 @@ async function typeInto(el, text, clear) {
   setter.call(el, clear ? text : el.value + text);
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
+  changeSent.add(el);
   showTypingField(el);
   return el;
 }
@@ -582,34 +584,43 @@ function checkTyped(el, text, cleared) {
   }
 }
 
+// Fields typeInto already sent a change to, which commitField must not repeat
+const changeSent = new WeakSet();
+
 // Leave a field the way a person clicking elsewhere does. Chip and token inputs
 // (Google Analytics' "Enter email addresses") turn the text into an entry only
-// when focus moves away; Enter submitted the form first. Returns whether the
-// field emptied itself, which is how such inputs show they took the entry.
-async function commitField(el) {
+// when focus moves away; Enter submitted the form first. Says whether the field
+// emptied itself or was replaced, which is how such inputs show they took the
+// entry, or null for a <select>, which holds a choice rather than text. With
+// refocus, focus goes back afterwards, so a real Enter that follows reaches the
+// field as it would after a person clicked back into it.
+async function commitField(el, refocus) {
+  const field = el.isContentEditable ? editingHost(el) : el;
   let changed = false, blurred = false;
   const noteChange = () => { changed = true; };
   const noteBlur = () => { blurred = true; };
-  el.addEventListener('change', noteChange, { once: true });
-  el.addEventListener('blur', noteBlur, { once: true });
-  el.blur();
-  el.removeEventListener('change', noteChange);
-  el.removeEventListener('blur', noteBlur);
+  field.addEventListener('change', noteChange, { once: true });
+  field.addEventListener('blur', noteBlur, { once: true });
+  field.blur();
+  field.removeEventListener('change', noteChange);
+  field.removeEventListener('blur', noteBlur);
   // In a window that is not in front, which is how agents mostly drive
   // Firefox, blur() fires nothing and the field keeps focus
   if (!blurred) {
-    el.dispatchEvent(new FocusEvent('blur'));
-    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    field.dispatchEvent(new FocusEvent('blur'));
+    field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
   }
-  // Firefox fires change on blur only for edits it counts as the user's. A
-  // <select> already had its change from chooseOption.
-  if (!changed && (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+  // chooseOption already sent a <select> its change
+  if (field instanceof HTMLSelectElement) return null;
+  // Firefox fires change on blur only for edits it counts as the user's
+  if (!changed && !changeSent.has(field) && (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) {
+    field.dispatchEvent(new Event('change', { bubbles: true }));
   }
   // Frameworks turn the text into a chip on their next render, not during blur
   await new Promise(resolve => setTimeout(resolve, COMMIT_SETTLE_MS));
-  const now = el.isContentEditable ? editingHost(el).innerText : el.value || '';
-  return !now.trim();
+  const emptied = !field.isConnected || !(field.isContentEditable ? field.innerText : field.value || '').trim();
+  if (refocus && field.isConnected) field.focus();
+  return emptied;
 }
 
 // Inputs a typed character does not go into. Date and time inputs take keys
@@ -1418,9 +1429,14 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
         moveCursorTo(el, true)
           .then(() => typeInto(el, data.text, data.clear !== false))
           .then(async field => {
-            const emptied = data.commit ? await commitField(field) : undefined;
-            if (data.submit) pressKey(field, 'Enter');
-            sendResponse({ typed: describe(field), emptied });
+            const form = field.form;
+            const emptied = data.commit ? await commitField(field, data.submit) : undefined;
+            if (data.submit) {
+              // A chip input that replaced the field leaves this one detached
+              if (field.isConnected || !form) pressKey(field, 'Enter');
+              else form.requestSubmit();
+            }
+            sendResponse({ typed: describe(field), committed: Boolean(data.commit), emptied });
           })
           .catch(error => sendResponse({ error: error.message }));
         break;
@@ -1557,7 +1573,8 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
               'a field that hands focus to an editor in a frame gets keys this page cannot see') : error;
           }
           showTypingField(el);
-          sendResponse({ typed: describe(el), emptied: data.commit ? await commitField(el) : undefined });
+          const emptied = data.commit ? await commitField(el, data.submit) : undefined;
+          sendResponse({ typed: describe(el), committed: Boolean(data.commit), emptied });
         }).catch(error => sendResponse({ error: error.message }));
         break;
       }
