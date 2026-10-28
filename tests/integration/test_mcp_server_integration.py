@@ -61,9 +61,9 @@ class TestMCPServerIntegration:
                     if websocket in server.connected_clients:
                         server.connected_clients.remove(websocket)
 
-            async def tracking_message_handler(message):
+            async def tracking_message_handler(message, websocket=None):
                 server.received_messages.append(message)
-                result = await original_message_handler(message)
+                result = await original_message_handler(message, websocket)
                 return result
 
             # Override send method to track sent messages
@@ -101,6 +101,21 @@ class TestMCPServerIntegration:
                 # Cleanup
                 await mcp_client.disconnect()
                 await server.shutdown(websocket_task)
+
+    @pytest_asyncio.fixture
+    async def browser_mcp_system(self, full_mcp_system):
+        """full_mcp_system with Firefox connected to it, for tools that need a browser"""
+        with FirefoxTestManager(
+            test_port=full_mcp_system['websocket_port'],
+            coordination_file=full_mcp_system['coordination_file']
+        ) as firefox:
+            assert firefox.setup_and_start_firefox(headless=True, skip_on_failure=False)
+            connected = await firefox.async_wait_for_extension_connection(
+                timeout=FIREFOX_TEST_CONFIG['extension_install_wait'] + 5.0,
+                server=full_mcp_system['server']
+            )
+            assert connected, "The extension should connect to the test server"
+            yield full_mcp_system
 
     @pytest.mark.asyncio
     async def test_mcp_server_startup(self, full_mcp_system):
@@ -278,13 +293,13 @@ class TestMCPServerIntegration:
         print("✓ Multiple MCP tool calls completed successfully")
 
     @pytest.mark.asyncio
-    async def test_mcp_recent_history_functionality(self, full_mcp_system):
+    async def test_mcp_recent_history_functionality(self, browser_mcp_system):
         """Test comprehensive recent history functionality through MCP
 
         This test ensures the MCP server can retrieve recent browser history
         and handles various parameter combinations correctly.
         """
-        system = full_mcp_system
+        system = browser_mcp_system
         mcp_client = system['mcp_client']
 
         await mcp_client.connect()

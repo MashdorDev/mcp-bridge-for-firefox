@@ -32,7 +32,7 @@ make build      # copy extension/ to dist/extension/
 make package    # build, then create the XPI and server ZIP, then clear the profile cache
 ```
 
-`package` produces `dist/packages/foxmcp@codemud.org.xpi` and
+`package` produces `dist/packages/foxmcp@dorzairi.dev.xpi` and
 `dist/packages/foxmcp-server.zip`.
 
 ### Test
@@ -99,7 +99,7 @@ tracked by git.
 | `scripts/install-xpi.sh` | yes | development |
 
 **Temporary add-on** — go to `about:debugging` → "This Firefox" → "Load Temporary
-Add-on" → pick `dist/packages/foxmcp@codemud.org.xpi`.
+Add-on" → pick `dist/packages/foxmcp@dorzairi.dev.xpi`.
 
 **`about:addons`** — set `xpinstall.signatures.required` to `false` in `about:config`
 first, then use the gear icon → "Install Add-on From File". Unsigned extensions cannot

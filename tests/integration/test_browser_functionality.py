@@ -410,9 +410,9 @@ class TestBrowserFunctionality:
 
         assert not screenshot_result.get('isError', False), f"Screenshot capture should not error: {screenshot_result}"
 
-        screenshot_content = screenshot_result.get('content', '')
-        assert "Screenshot captured successfully" in screenshot_content, "Should report successful capture"
-        assert "data:image/" in screenshot_content, "Should contain data URL"
+        # With no filename the screenshot comes back as an image, not text
+        screenshot_image = screenshot_result.get('content')
+        assert getattr(screenshot_image, 'data', None), f"Should return the image: {screenshot_result}"
         print("   ✅ Basic screenshot capture successful")
 
         # Step 2: Test screenshot with PNG format
@@ -423,8 +423,8 @@ class TestBrowserFunctionality:
         })
 
         assert not png_result.get('isError', False), f"PNG screenshot should not error: {png_result}"
-        png_content = png_result.get('content', '')
-        assert "Screenshot captured successfully" in png_content, "PNG screenshot should succeed"
+        png_image = png_result.get('content')
+        assert getattr(png_image, 'data', b'')[:4] == b'\x89PNG', f"Should return a PNG: {png_result}"
         print("   ✅ PNG format screenshot successful")
 
         print("✅ End-to-end screenshot capture test successful!")

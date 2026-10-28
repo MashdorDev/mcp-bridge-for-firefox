@@ -8,8 +8,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-XPI_FILE="$PROJECT_ROOT/dist/packages/foxmcp@codemud.org.xpi"
-EXTENSION_ID="foxmcp@codemud.org"
+XPI_FILE="$PROJECT_ROOT/dist/packages/foxmcp@dorzairi.dev.xpi"
+EXTENSION_ID="foxmcp@dorzairi.dev"
 
 usage() {
     echo "Usage: $0 <firefox-profile-directory>"

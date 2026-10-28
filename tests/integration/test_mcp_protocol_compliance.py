@@ -16,6 +16,8 @@ import test_imports  # Automatic path setup
 from server.server import FoxMCPServer
 from port_coordinator import coordinated_test_ports
 from mcp_client_harness import DirectMCPTestClient
+from firefox_test_utils import FirefoxTestManager
+from test_config import FIREFOX_TEST_CONFIG
 
 
 class TestMCPProtocolCompliance:
@@ -62,6 +64,21 @@ class TestMCPProtocolCompliance:
                 # Cleanup
                 await mcp_client.disconnect()
                 await server.shutdown(websocket_task)
+
+    @pytest_asyncio.fixture
+    async def browser_mcp_system(self, full_mcp_system):
+        """full_mcp_system with Firefox connected to it, for tools that need a browser"""
+        with FirefoxTestManager(
+            test_port=full_mcp_system['websocket_port'],
+            coordination_file=full_mcp_system['coordination_file']
+        ) as firefox:
+            assert firefox.setup_and_start_firefox(headless=True, skip_on_failure=False)
+            connected = await firefox.async_wait_for_extension_connection(
+                timeout=FIREFOX_TEST_CONFIG['extension_install_wait'] + 5.0,
+                server=full_mcp_system['server']
+            )
+            assert connected, "The extension should connect to the test server"
+            yield full_mcp_system
 
     @pytest.mark.asyncio
     async def test_real_mcp_http_server_tool_names(self, full_mcp_system):
@@ -172,13 +189,13 @@ class TestMCPProtocolCompliance:
                 print(f"✓ History tools found: {[t for t in tool_names if 'history' in t]}")
 
     @pytest.mark.asyncio
-    async def test_mcp_parameter_format_validation(self, full_mcp_system):
+    async def test_mcp_parameter_format_validation(self, browser_mcp_system):
         """Test that MCP tools properly validate parameter formats
 
         This test catches parameter format issues that external agents might encounter,
         such as sending 'arguments' instead of 'params', or string instead of JSON object.
         """
-        system = full_mcp_system
+        system = browser_mcp_system
         server = system['server']
 
         # Get the FastMCP tool to examine its expected parameters

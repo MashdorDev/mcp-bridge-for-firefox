@@ -13,6 +13,7 @@ import sqlite3
 import atexit
 import tarfile
 import re
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +45,62 @@ def resolve_firefox_path(firefox_path=None):
     return shutil.which(candidate)
 
 
+def firefox_enforces_signing(firefox_path):
+    """Whether this Firefox loads only signed add-ons from a profile
+
+    Release and beta builds ignore xpinstall.signatures.required, so an unsigned
+    XPI dropped into the profile never loads and every test skips. Those get
+    the add-on as a temporary one instead, the way web-ext does. A Firefox whose
+    channel cannot be read (macOS keeps it elsewhere, Linux distributions start
+    it from a wrapper script) gets one too: a temporary add-on loads on every
+    channel, an unsigned one only on Nightly, Developer Edition and ESR.
+    """
+    firefox_path = os.path.expanduser(firefox_path)
+    resolved = shutil.which(firefox_path) or firefox_path
+    prefs = Path(resolved).resolve().parent / 'defaults' / 'pref' / 'channel-prefs.js'
+    try:
+        match = re.search(r'app\.update\.channel"\s*,\s*"([^"]+)"', prefs.read_text())
+    except OSError:
+        return True
+    return not match or match.group(1) in ('release', 'beta')
+
+
+class _DebuggerConnection:
+    """Firefox's remote debugging protocol, as much of it as installing a
+    temporary add-on takes: JSON packets framed as <byte length>:<json>"""
+
+    def __init__(self, port, timeout):
+        self.sock = socket.create_connection(('127.0.0.1', port), timeout=timeout)
+        self.buffer = b''
+
+    def _fill(self):
+        chunk = self.sock.recv(65536)
+        if not chunk:
+            raise ConnectionError('Firefox closed the debugging connection')
+        self.buffer += chunk
+
+    def read(self):
+        while b':' not in self.buffer:
+            self._fill()
+        length, _, self.buffer = self.buffer.partition(b':')
+        while len(self.buffer) < int(length):
+            self._fill()
+        packet, self.buffer = self.buffer[:int(length)], self.buffer[int(length):]
+        return json.loads(packet)
+
+    def request(self, to, kind, **fields):
+        data = json.dumps({'to': to, 'type': kind, **fields}).encode()
+        self.sock.sendall(str(len(data)).encode() + b':' + data)
+        # Other actors can speak in between; the answer comes from the one asked
+        while True:
+            packet = self.read()
+            if packet.get('from') == to:
+                return packet
+
+    def close(self):
+        self.sock.close()
+
+
 @dataclass
 class ProfileCacheEntry:
     """Cache entry for Firefox profiles stored as compressed files"""
@@ -68,6 +125,8 @@ class FirefoxTestManager:
         self.coordination_file = coordination_file
         self.profile_dir = None
         self.firefox_process = None
+        self.temporary_addon = firefox_enforces_signing(self.firefox_path)
+        self.debugger_port = None
 
     @classmethod
     def _get_cache_dir(cls):
@@ -210,7 +269,7 @@ class FirefoxTestManager:
 
             # Check extension is installed and up-to-date
             extensions_dir = os.path.join(profile_path, 'extensions')
-            extension_file = os.path.join(extensions_dir, 'foxmcp@codemud.org.xpi')
+            extension_file = os.path.join(extensions_dir, 'foxmcp@dorzairi.dev.xpi')
             if not os.path.exists(extension_file):
                 return False  # Extension should be installed
 
@@ -246,7 +305,7 @@ class FirefoxTestManager:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT data FROM storage_sync_data WHERE ext_id = ?",
-                ("foxmcp@codemud.org",)
+                ("foxmcp@dorzairi.dev",)
             )
             result = cursor.fetchone()
             conn.close()
@@ -313,6 +372,13 @@ class FirefoxTestManager:
     def _create_test_profile(self):
         """Create or retrieve cached Firefox profile configured for testing"""
 
+        # A temporary add-on is installed when Firefox starts, so the profile
+        # holds nothing worth caching
+        if self.temporary_addon:
+            self.profile_dir = self._create_new_profile(install=False)
+            print(f"✓ Created profile for port {self.test_port} (add-on installed as temporary): {self.profile_dir}")
+            return self.profile_dir
+
         # Check cache first
         cached_profile = self._get_cached_profile(self.test_port)
         if cached_profile:
@@ -326,8 +392,9 @@ class FirefoxTestManager:
         print(f"✓ Created and cached new profile for port {self.test_port}: {self.profile_dir}")
         return self.profile_dir
 
-    def _create_new_profile(self):
-        """Create a new profile (will be compressed for caching)"""
+    def _create_new_profile(self, install=True):
+        """Create a new profile (will be compressed for caching), with the
+        add-on installed in it unless it is to be a temporary one"""
         profile_dir = tempfile.mkdtemp(prefix='foxmcp-new-profile-')
 
         # Create user.js with extension settings and test configuration
@@ -365,6 +432,11 @@ user_pref("identity.fxaccounts.enabled", false);
 // Force extension to use local storage only
 user_pref("extensions.webextensions.storage.sync.enabled", false);
 
+// Remote debugging, for installing the add-on as a temporary one
+user_pref("devtools.debugger.remote-enabled", true);
+user_pref("devtools.chrome.enabled", true);
+user_pref("devtools.debugger.prompt-connection", false);
+
 // FORCE override default WebSocket port to prevent connecting to development server
 user_pref("extensions.foxmcp.forceTestPort", true);
 user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
@@ -379,6 +451,8 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
         try:
             # Create extension storage with test configuration
             self._setup_extension_test_config()
+            if not install:
+                return profile_dir
 
             # Install extension as part of profile creation
             extension_path = _get_extension_xpi_path()
@@ -416,7 +490,7 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
         """Pre-configure extension storage before Firefox runs for the first time"""
         try:
             # Create browser extension data directory structure manually
-            storage_dir = os.path.join(self.profile_dir, 'browser-extension-data', 'foxmcp@codemud.org')
+            storage_dir = os.path.join(self.profile_dir, 'browser-extension-data', 'foxmcp@dorzairi.dev')
             os.makedirs(storage_dir, exist_ok=True)
 
             # Create a simple local storage file with test configuration
@@ -454,7 +528,7 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
             print(f"✗ Extension not found: {extension_path}")
             return False
 
-        extension_name = 'foxmcp@codemud.org.xpi'
+        extension_name = 'foxmcp@dorzairi.dev.xpi'
         dest_path = os.path.join(extensions_dir, extension_name)
         shutil.copy2(extension_path, dest_path)
         print(f"✓ Extension copied to test profile: {extension_name}")
@@ -553,7 +627,7 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
             # Use jq to enable the extension
             jq_command = [
                 'jq',
-                '.addons[] |= if .id == "foxmcp@codemud.org" then .userDisabled = false | .active = true else . end',
+                '.addons[] |= if .id == "foxmcp@dorzairi.dev" then .userDisabled = false | .active = true else . end',
                 extensions_json_path
             ]
 
@@ -573,6 +647,19 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
         except Exception as e:
             print(f"✗ Failed to enable extension: {e}")
             return False
+
+    def _test_storage_config(self):
+        """What the add-on's storage.sync holds in a test profile"""
+        return {
+            'hostname': 'localhost',
+            'port': self.test_port,  # Use dynamic test port
+            'retryInterval': 1000,
+            'maxRetries': 5,
+            'pingTimeout': 2000,
+            # Test configuration overrides (extension will use these)
+            'testPort': self.test_port,
+            'testHostname': 'localhost'
+        }
 
     def _configure_extension_storage(self):
         """Configure extension storage by updating the SQLite database directly"""
@@ -618,19 +705,7 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
 
                 print("✓ Storage database created")
 
-            # Create the test configuration data
-            test_config = {
-                'hostname': 'localhost',
-                'port': self.test_port,  # Use dynamic test port
-                'retryInterval': 1000,
-                'maxRetries': 5,
-                'pingTimeout': 2000,
-                # Test configuration overrides (extension will use these)
-                'testPort': self.test_port,
-                'testHostname': 'localhost'
-            }
-
-            config_json = json.dumps(test_config)
+            config_json = json.dumps(self._test_storage_config())
 
             # Update the SQLite database
             conn = sqlite3.connect(storage_db_path)
@@ -640,7 +715,7 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
                 # Check if the extension entry exists
                 cursor.execute(
                     "SELECT COUNT(*) FROM storage_sync_data WHERE ext_id = ?",
-                    ("foxmcp@codemud.org",)
+                    ("foxmcp@dorzairi.dev",)
                 )
                 exists = cursor.fetchone()[0] > 0
 
@@ -648,14 +723,14 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
                     # Update existing entry
                     cursor.execute(
                         "UPDATE storage_sync_data SET data = ?, sync_change_counter = sync_change_counter + 1 WHERE ext_id = ?",
-                        (config_json, "foxmcp@codemud.org")
+                        (config_json, "foxmcp@dorzairi.dev")
                     )
                     print("✓ Updated existing extension storage entry")
                 else:
                     # Insert new entry
                     cursor.execute(
                         "INSERT INTO storage_sync_data (ext_id, data, sync_change_counter) VALUES (?, ?, 1)",
-                        ("foxmcp@codemud.org", config_json)
+                        ("foxmcp@dorzairi.dev", config_json)
                     )
                     print("✓ Created new extension storage entry")
 
@@ -688,6 +763,12 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
         if headless:
             firefox_cmd.append('-headless')
 
+        if self.temporary_addon:
+            with socket.socket() as probe:
+                probe.bind(('127.0.0.1', 0))
+                self.debugger_port = probe.getsockname()[1]
+            firefox_cmd += ['--start-debugger-server', str(self.debugger_port)]
+
         # Firefox explains its own startup failures on stderr, and sending that to
         # DEVNULL leaves "exited immediately (code: 1)" as the only symptom - true
         # of a missing profile, a rejected profile and a broken build alike. Kept
@@ -713,12 +794,65 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
                         f"Firefox said: {self._read_stderr_log(stderr_log)}"
                     )
 
+            if self.temporary_addon:
+                try:
+                    self._install_temporary_addon()
+                except Exception:
+                    # A Firefox left running holds the profile, which then
+                    # cannot be removed
+                    self.stop_firefox()
+                    raise
+
             print(f"✓ Firefox started with test profile (PID: {self.firefox_process.pid})")
             return True
 
         except Exception as e:
             print(f"✗ Failed to start Firefox: {e}")
             return False
+
+    def _install_temporary_addon(self):
+        """Install the working tree's add-on into the running Firefox as a
+        temporary add-on, over the remote debugging protocol
+
+        The add-on starts with empty storage, so the copy writes the same test
+        configuration the profile install seeds into storage.sync, and reads its
+        configuration only once that is done.
+        """
+        addon_dir = os.path.join(self.profile_dir, 'temporary-addon')
+        shutil.copytree(project_root / 'extension', addon_dir,
+                        ignore=shutil.ignore_patterns('.amo-upload-uuid'))
+        background = Path(addon_dir) / 'background.js'
+        source = background.read_text(encoding='utf-8')
+        load_config = 'async function loadConfig() {'
+        if source.count(load_config) != 1:
+            raise RuntimeError(f"background.js has no single '{load_config}' to seed the test configuration before")
+        seed = json.dumps(self._test_storage_config())
+        source = (f'const FOXMCP_TEST_CONFIG = browser.storage.sync.set({seed});\n' +
+                  source.replace(load_config, f'{load_config}\n  await FOXMCP_TEST_CONFIG;'))
+        background.write_text(source, encoding='utf-8')
+
+        deadline = time.time() + FIREFOX_TEST_CONFIG.get('debugger_connect_timeout', 40)
+        while True:
+            try:
+                connection = _DebuggerConnection(self.debugger_port, timeout=10)
+                break
+            except OSError:
+                if self.firefox_process.poll() is not None:
+                    raise RuntimeError(f"Firefox exited (code {self.firefox_process.returncode}) before its "
+                                       f"debugger opened. Firefox said: "
+                                       f"{self._read_stderr_log(os.path.join(self.profile_dir, 'firefox-stderr.log'))}")
+                if time.time() > deadline:
+                    raise RuntimeError(f"Firefox's debugger did not open on port {self.debugger_port}")
+                time.sleep(0.5)
+        try:
+            connection.read()  # the root actor's greeting
+            root = connection.request('root', 'getRoot')
+            reply = connection.request(root['addonsActor'], 'installTemporaryAddon', addonPath=addon_dir)
+            if 'error' in reply:
+                raise RuntimeError(f"Firefox refused the temporary add-on: {reply.get('message', reply['error'])}")
+        finally:
+            connection.close()
+        print(f"✓ Add-on installed as temporary, connecting to port {self.test_port}")
 
     @staticmethod
     def _read_stderr_log(path):
@@ -830,6 +964,12 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
         """Stop the Firefox process"""
         if self.firefox_process:
             try:
+                if os.name == 'nt':
+                    # terminate() ends only the main process on Windows; the
+                    # content processes keep the profile open, so it could not
+                    # be removed and a profile was left in Temp on every run
+                    subprocess.run(['taskkill', '/T', '/F', '/PID', str(self.firefox_process.pid)],
+                                   capture_output=True)
                 self.firefox_process.terminate()
                 self.firefox_process.wait(timeout=5)
                 print("✓ Firefox stopped gracefully")
@@ -848,11 +988,19 @@ user_pref("extensions.foxmcp.testPort", ''' + str(self.test_port) + ''');
 
         # Always delete the extracted profile directory
         if self.profile_dir and os.path.exists(self.profile_dir):
-            try:
-                shutil.rmtree(self.profile_dir)
-                print("✓ Extracted profile cleaned up")
-            except Exception as e:
-                print(f"⚠ Error cleaning up extracted profile: {e}")
+            # Windows keeps a stopped Firefox's files locked for a moment
+            for attempt in range(10):
+                try:
+                    shutil.rmtree(self.profile_dir)
+                    print("✓ Extracted profile cleaned up")
+                    break
+                except PermissionError as e:
+                    if attempt == 9:
+                        print(f"⚠ Error cleaning up extracted profile: {e}")
+                    time.sleep(0.5)
+                except Exception as e:
+                    print(f"⚠ Error cleaning up extracted profile: {e}")
+                    break
 
         # Unlock the cached compressed profile if it exists
         if self.test_port in self._profile_cache:
@@ -958,7 +1106,7 @@ def validate_history_item_timestamp(item, field_name="lastVisitTime"):
 
 def _get_extension_xpi_path():
     """Get path to built extension XPI file"""
-    xpi_path = project_root / 'dist' / 'packages' / 'foxmcp@codemud.org.xpi'
+    xpi_path = project_root / 'dist' / 'packages' / 'foxmcp@dorzairi.dev.xpi'
 
     if xpi_path.exists():
         return str(xpi_path)
@@ -966,13 +1114,13 @@ def _get_extension_xpi_path():
     # Second try: search upward for the dist directory
     search_path = Path(__file__).resolve().parent
     while search_path != search_path.parent:  # Stop at filesystem root
-        potential_xpi = search_path / 'dist' / 'packages' / 'foxmcp@codemud.org.xpi'
+        potential_xpi = search_path / 'dist' / 'packages' / 'foxmcp@dorzairi.dev.xpi'
         if potential_xpi.exists():
             return str(potential_xpi)
         search_path = search_path.parent
 
     # Third try: alternative location in extension directory
-    alt_path = project_root / 'extension' / 'foxmcp@codemud.org.xpi'
+    alt_path = project_root / 'extension' / 'foxmcp@dorzairi.dev.xpi'
     if alt_path.exists():
         return str(alt_path)
 

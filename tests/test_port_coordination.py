@@ -49,7 +49,7 @@ def test_firefox_coordination():
             print(f"✓ Firefox configured for WebSocket port: {configured_port}")
             
             # Verify configuration file was created
-            config_path = os.path.join(temp_profile, 'browser-extension-data', 'foxmcp@codemud.org', 'config.json')
+            config_path = os.path.join(temp_profile, 'browser-extension-data', 'foxmcp@dorzairi.dev', 'config.json')
             assert os.path.exists(config_path), "Extension config should be created"
             
             # Verify config content

@@ -113,18 +113,18 @@ jobs:
       - name: Record checksums
         working-directory: dist/packages
         run: |
-          sha256sum 'foxmcp@codemud.org.xpi' foxmcp-server.zip | tee SHA256SUMS
+          sha256sum 'foxmcp@dorzairi.dev.xpi' foxmcp-server.zip | tee SHA256SUMS
 
       # This is the part that answers issue #1. The attestation is a signed
       # statement that these exact bytes came out of this workflow, at this
       # commit, in this repository. Anyone can check it without trusting us:
-      #   gh attestation verify foxmcp@codemud.org.xpi --repo ThinkerYzu/foxmcp
+      #   gh attestation verify foxmcp@dorzairi.dev.xpi --repo MashdorDev/mcp-bridge-for-firefox
       - name: Attest where these artifacts came from
         if: needs.verify.outputs.publish == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            dist/packages/foxmcp@codemud.org.xpi
+            dist/packages/foxmcp@dorzairi.dev.xpi
             dist/packages/foxmcp-server.zip
 
       - uses: actions/upload-artifact@v4
@@ -159,7 +159,7 @@ jobs:
           gh release create "v$VERSION" \
             --title "FoxMCP v$VERSION" \
             --notes-file "$RUNNER_TEMP/notes.md" \
-            'dist/packages/foxmcp@codemud.org.xpi' \
+            'dist/packages/foxmcp@dorzairi.dev.xpi' \
             dist/packages/foxmcp-server.zip \
             dist/packages/SHA256SUMS \
             scripts/install-from-github.sh

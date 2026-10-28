@@ -721,13 +721,13 @@ class TestWindowManagementEndToEnd:
                 new_window_tabs = 0
                 
                 for line in final_content.split('\n'):
-                    if f"ID {original_window_id}" in line and "tabs" in line:
+                    if f"ID {original_window_id}:" in line and "tabs" in line:
                         print(f"Original window final state: {line}")
                         tab_count_match = re.search(r'(\d+) tabs', line)
                         if tab_count_match:
                             original_window_tabs = int(tab_count_match.group(1))
                     
-                    if f"ID {window_id}" in line and "tabs" in line:
+                    if f"ID {window_id}:" in line and "tabs" in line:
                         print(f"New window final state: {line}")
                         tab_count_match = re.search(r'(\d+) tabs', line)
                         if tab_count_match:
