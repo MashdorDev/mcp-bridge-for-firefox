@@ -2795,7 +2795,8 @@ class FoxMCPTools:
             selector: Optional[str] = None,
             clear: bool = True,
             submit: bool = False,
-            field: Optional[str] = None
+            field: Optional[str] = None,
+            commit: bool = False
         ) -> str:
             """Type text into an input, textarea or editable element
 
@@ -2810,7 +2811,18 @@ class FoxMCPTools:
                 submit: Press Enter afterwards (default: False)
                 field: The field's label, aria-label or placeholder ("Search",
                     "Leave a reply"), instead of a ref or selector
+                commit: Leave the field afterwards, as a click elsewhere would
+                    (blur and change). Chip and token inputs, such as a list
+                    of email addresses, often accept an entry only then, and
+                    Enter may submit the form first (default: False)
             """
+            def typed(into, data, how=""):
+                committed = ""
+                if commit:
+                    committed = (", and left it; the field emptied, so it likely took the text as an entry"
+                                 if data.get("emptied") else ", and left it; the text is still in the field")
+                return f"Typed into {into}{how}{committed}"
+
             async def type_for_real(bidi, context, element):
                 await bidi.click(context, element)
                 if clear:
@@ -2827,24 +2839,24 @@ class FoxMCPTools:
                 found = {"tabId": tab_id, "ref": None, "selector": prep.get("selector")}
                 checked, error = await page_request({
                     "action": "content.check_typed",
-                    "data": {**found, "text": text, "clear": clear, "token": prep["token"]}
+                    "data": {**found, "text": text, "clear": clear, "commit": commit, "token": prep["token"]}
                 })
                 if error:
                     return f"Failed to type: {error}"
                 if submit:
                     await real_input(tab_id, None, prep.get("selector"), "key",
                                      lambda bidi, context, element: bidi.press(context, "Enter"))
-                return f"Typed into {checked.get('typed')} (real input)"
+                return typed(checked.get('typed'), checked, " (real input)")
             if real is not SCRIPTED_ONLY and (refusal := scripted_refusal("type")):
                 return refusal
             data, error = await page_request({
                 "action": "content.type",
                 "data": {**target(tab_id, ref, selector, field),
-                         "text": text, "clear": clear, "submit": submit}
+                         "text": text, "clear": clear, "submit": submit, "commit": commit}
             })
             if error:
                 return f"Failed to type: {error}"
-            return f"Typed into {data.get('typed')}"
+            return typed(data.get('typed'), data)
 
         # Press Key Tool
         @self._tool()

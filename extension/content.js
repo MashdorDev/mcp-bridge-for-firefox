@@ -421,6 +421,8 @@ function clickElement(el, clicks = 1) {
 // input event per piece, as they would from a keyboard.
 const TYPE_ANIMATION_MS = 1000;
 const TYPE_STEP_MS = 25;
+// How long commitField gives a page to turn typed text into a chip
+const COMMIT_SETTLE_MS = 300;
 
 // Focusing an editable element does not put the caret inside it, and
 // insertText with no caret in the element is refused.
@@ -578,6 +580,36 @@ function checkTyped(el, text, cleared) {
   if (cleared && now !== wanted) {
     throw new Error(`The field was not cleared: it holds ${now.length} characters, the text was ${wanted.length}`);
   }
+}
+
+// Leave a field the way a person clicking elsewhere does. Chip and token inputs
+// (Google Analytics' "Enter email addresses") turn the text into an entry only
+// when focus moves away; Enter submitted the form first. Returns whether the
+// field emptied itself, which is how such inputs show they took the entry.
+async function commitField(el) {
+  let changed = false, blurred = false;
+  const noteChange = () => { changed = true; };
+  const noteBlur = () => { blurred = true; };
+  el.addEventListener('change', noteChange, { once: true });
+  el.addEventListener('blur', noteBlur, { once: true });
+  el.blur();
+  el.removeEventListener('change', noteChange);
+  el.removeEventListener('blur', noteBlur);
+  // In a window that is not in front, which is how agents mostly drive
+  // Firefox, blur() fires nothing and the field keeps focus
+  if (!blurred) {
+    el.dispatchEvent(new FocusEvent('blur'));
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+  }
+  // Firefox fires change on blur only for edits it counts as the user's. A
+  // <select> already had its change from chooseOption.
+  if (!changed && (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  // Frameworks turn the text into a chip on their next render, not during blur
+  await new Promise(resolve => setTimeout(resolve, COMMIT_SETTLE_MS));
+  const now = el.isContentEditable ? editingHost(el).innerText : el.value || '';
+  return !now.trim();
 }
 
 // Inputs a typed character does not go into. Date and time inputs take keys
@@ -1385,9 +1417,10 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
         showOverlay('typing');
         moveCursorTo(el, true)
           .then(() => typeInto(el, data.text, data.clear !== false))
-          .then(field => {
+          .then(async field => {
+            const emptied = data.commit ? await commitField(field) : undefined;
             if (data.submit) pressKey(field, 'Enter');
-            sendResponse({ typed: describe(field) });
+            sendResponse({ typed: describe(field), emptied });
           })
           .catch(error => sendResponse({ error: error.message }));
         break;
@@ -1515,7 +1548,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       case 'checkTypedText': {
         const el = findTarget(data);
-        realInputArrived(data.token).then(arrived => {
+        realInputArrived(data.token).then(async arrived => {
           try {
             checkTyped(el, data.text, data.clear);
           } catch (error) {
@@ -1524,7 +1557,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
               'a field that hands focus to an editor in a frame gets keys this page cannot see') : error;
           }
           showTypingField(el);
-          sendResponse({ typed: describe(el) });
+          sendResponse({ typed: describe(el), emptied: data.commit ? await commitField(el) : undefined });
         }).catch(error => sendResponse({ error: error.message }));
         break;
       }
