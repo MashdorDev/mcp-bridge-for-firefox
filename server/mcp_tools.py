@@ -2069,14 +2069,14 @@ class FoxMCPTools:
             browsers = list(getattr(server, 'browsers', {}).values())
             since = getattr(server, 'listening_since', None)
             started_s = time.monotonic() - since if since is not None else None
-            if (not any(b.version for b in browsers) and started_s is not None
+            if (not any(b.said_hello for b in browsers) and started_s is not None
                     and started_s < RECONNECT_WINDOW_S):
                 # Right after a restart (/mcp) the add-ons have not found this
                 # server yet; give them a moment before saying there are none.
-                # A browser is listed once it has said hello (version set), not
+                # A browser is listed once it has said hello, not
                 # on the bare connection, which still has a placeholder name.
                 deadline = time.monotonic() + RECONNECT_WAIT_S
-                while not any(b.version for b in server.browsers.values()) and time.monotonic() < deadline:
+                while not any(b.said_hello for b in server.browsers.values()) and time.monotonic() < deadline:
                     await asyncio.sleep(0.25)
                 browsers = list(server.browsers.values())
                 started_s = time.monotonic() - since

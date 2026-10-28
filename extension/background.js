@@ -293,7 +293,7 @@ const EXTRA_SERVER_SCAN_MS = 15000;
 const EXTRA_SERVER_RESCAN_MS = 3000;
 const EXTRA_SERVER_RESCAN_FOR_MS = 60000;
 const extraSockets = new Map(); // port -> socket
-const extraServersLost = new Map(); // port -> when its open connection dropped
+const extraServersLost = new Map(); // port -> when its open connection first dropped
 let extraScanRunning = false;
 let lastExtraScan = 0;
 
@@ -310,7 +310,6 @@ function connectExtraServer(port) {
     let opened = false;
     socket.onopen = () => {
       opened = true;
-      extraServersLost.delete(port);
       console.log(`Connected to an additional MCP server on port ${port}`);
       updateBadge();
       sendHello(socket).catch(error => console.error('Could not send hello:', error));
@@ -319,7 +318,9 @@ function connectExtraServer(port) {
     socket.onmessage = async (event) => handleMessage(JSON.parse(event.data), socket);
     socket.onclose = (event) => {
       if (opened) {
-        extraServersLost.set(port, Date.now());
+        // The first drop starts the minute: a server that accepts and drops
+        // again would otherwise keep it going, probed every 3 s for good
+        if (!extraServersLost.has(port)) extraServersLost.set(port, Date.now());
         console.log(`Lost the additional MCP server on port ${port} (close code ${event.code})`);
       }
       if (extraSockets.get(port) === socket) extraSockets.delete(port);

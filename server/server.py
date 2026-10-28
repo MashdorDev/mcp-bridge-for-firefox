@@ -156,6 +156,8 @@ class BrowserConnection:
     websocket: Any
     name: str
     version: str = ''
+    # Set by the hello; until then name and key are placeholders
+    said_hello: bool = False
     # 'firefox', or 'thunderbird' for the Thunderbird add-on, which answers a
     # different set of actions
     app: str = 'firefox'
@@ -422,6 +424,7 @@ class FoxMCPServer:
         if browser is None:
             return
         browser.version = str(data.get('version') or '')
+        browser.said_hello = True
         browser.real_input = bool(data.get('real_input'))
         browser.real_input_missed_at = 0.0  # the person may just have set it up
         try:
