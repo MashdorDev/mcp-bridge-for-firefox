@@ -31,6 +31,9 @@ class RecordingWindow(WindowInput):
     def post(self, message, wparam, lparam):
         self.posted.append((message, wparam))
 
+    async def make_active(self):
+        pass
+
     def hold(self, keys):
         self.held.append(list(keys))
 
@@ -157,6 +160,75 @@ def test_a_hidden_tab_can_still_come_up():
     """Right after a tab is activated it can still read as hidden: the tool retries this one"""
     with pytest.raises(WindowNotShowing):
         WindowInput({'screen': {'x': 0, 'y': 0, 'dpr': 1, 'title': 'Page', 'hidden': True}})
+
+
+def fake_windows(monkeypatch, foreground, same_firefox=False):
+    posted = []
+    monkeypatch.setattr(win_input, 'firefox_windows', lambda: [7])
+    monkeypatch.setattr(win_input, 'window_contains', lambda hwnd, x, y: True)
+    monkeypatch.setattr(win_input, 'window_title', lambda hwnd: 'Page - Firefox')
+    monkeypatch.setattr(win_input, 'ACTIVATE_SETTLE_S', 0)
+    monkeypatch.setattr(win_input, 'same_firefox', lambda one, other: same_firefox or one == other)
+    monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: foreground, raising=False)
+    monkeypatch.setattr(win_input.user32, 'GetWindowThreadProcessId', lambda hwnd, _: 1, raising=False)
+    monkeypatch.setattr(win_input.user32, 'PostMessageW', lambda h, m, w, l: posted.append((h, m, w)) or 1, raising=False)
+    return posted
+
+
+ACTIVE, INACTIVE = (7, win_input.WM_ACTIVATE, win_input.WA_ACTIVE), (7, win_input.WM_ACTIVATE, win_input.WA_INACTIVE)
+
+
+@pytest.mark.asyncio
+async def test_keys_make_a_background_window_active_and_it_steps_down_later(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99)
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+        await window.make_active()
+        assert posted == [ACTIVE]
+    # The timer itself is asyncio: what matters is what it does when it fires
+    win_input.activated[7].cancel()
+    win_input.step_down(7)
+    assert posted == [ACTIVE, INACTIVE]
+    assert not win_input.activated
+
+
+@pytest.mark.asyncio
+async def test_an_action_without_keys_leaves_the_window_as_it_was(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99)
+    async with WindowInput(PREP):
+        pass
+    assert posted == []
+    assert not win_input.activated
+
+
+@pytest.mark.asyncio
+async def test_activation_is_posted_again_even_with_a_step_down_pending(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99)
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+    assert posted == [ACTIVE, ACTIVE]
+    win_input.activated[7].cancel()
+    win_input.activated.clear()
+
+
+@pytest.mark.asyncio
+async def test_the_window_the_person_is_in_is_left_alone(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=7)
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+    assert posted == []
+    assert not win_input.activated
+
+
+@pytest.mark.asyncio
+async def test_another_window_of_the_same_firefox_is_not_lowered(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99, same_firefox=True)
+    async with WindowInput(PREP) as window:
+        with pytest.raises(WindowInputUnavailable):
+            await window.make_active()
+    assert posted == []
 
 
 def test_no_screen_position_is_not_worth_retrying():

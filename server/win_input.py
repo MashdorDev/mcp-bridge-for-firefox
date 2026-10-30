@@ -11,6 +11,10 @@ the person's own mouse pointer never moves, so they can keep working while
 the agent clicks. The window does not need to be in front either; only the
 tab has to be the one showing in it, which the extension sees to.
 
+Keys reach only a window Firefox believes is active, and that belief comes
+from the WM_ACTIVATE it receives, not from Windows. Posting one gives the page
+focus while the person's own window stays in front and keeps their keyboard.
+
 Modifier keys are the one catch: Firefox reads them from the keyboard state of
 its input thread, not from the messages. So for a combination such as Alt+2
 this thread joins Firefox's input queue for a moment and sets that state.
@@ -19,6 +23,7 @@ Licensed under the MIT License - see LICENSE file for details
 """
 
 import asyncio
+import atexit
 import sys
 from typing import Any, Dict, List
 
@@ -39,6 +44,7 @@ if AVAILABLE:
     user32.VkKeyScanW.restype = ctypes.c_short
     EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
+WM_ACTIVATE, WA_INACTIVE, WA_ACTIVE = 0x006, 0, 1
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK = 0x200, 0x201, 0x202, 0x203
 WM_RBUTTONDOWN, WM_RBUTTONUP = 0x204, 0x205
 WM_MBUTTONDOWN, WM_MBUTTONUP = 0x207, 0x208
@@ -133,6 +139,43 @@ def key_lparam(vk: int, up: bool = False, alt: bool = False) -> int:
     return lparam
 
 
+# How long Firefox takes to act on a posted WM_ACTIVATE before keys can follow it
+ACTIVATE_SETTLE_S = 0.1
+# How long a background window stays active after the last action. Pages close
+# open menus when the window blurs, so stepping down after each action would
+# undo what the agent just opened before its next call.
+ACTIVE_FOR_S = 20.0
+# Background windows made active, and the timer that steps each one down
+activated: Dict[int, asyncio.TimerHandle] = {}
+
+
+def same_firefox(one: int, other: int) -> bool:
+    """Firefox keeps one active window per process, so activating any window of
+    the one the person is in would lower the window they are using"""
+    pids = [wintypes.DWORD(), wintypes.DWORD()]
+    user32.GetWindowThreadProcessId(one, ctypes.byref(pids[0]))
+    user32.GetWindowThreadProcessId(other, ctypes.byref(pids[1]))
+    return pids[0].value == pids[1].value
+
+
+def step_down(hwnd: int):
+    activated.pop(hwnd, None)
+    # Once the person has come to this Firefox, its active state is theirs
+    if not same_firefox(user32.GetForegroundWindow(), hwnd):
+        user32.PostMessageW(hwnd, WM_ACTIVATE, WA_INACTIVE, 0)
+
+
+def step_all_down():
+    """A window left active reports focus to its pages until someone uses it"""
+    for hwnd, timer in list(activated.items()):
+        timer.cancel()
+        step_down(hwnd)
+
+
+if AVAILABLE:
+    atexit.register(step_all_down)
+
+
 class WindowInput:
     """Input for one tab, through its Firefox window: `async with WindowInput(prep) as win:`
 
@@ -161,6 +204,7 @@ class WindowInput:
         self.thread = 0
         self.buttons = 0
         self.attached = False
+        self.made_active = False
 
     async def __aenter__(self):
         x, y = self.screen_point(0, 0)
@@ -181,6 +225,27 @@ class WindowInput:
 
     async def __aexit__(self, *exc):
         self.release()
+        if self.made_active:
+            activated[self.hwnd] = asyncio.get_running_loop().call_later(ACTIVE_FOR_S, step_down, self.hwnd)
+
+    async def make_active(self):
+        """Let this window take keys, once per action. Posted every time rather
+        than remembered: leaving Firefox after using it, or a detach from its
+        input queue, makes it inactive again with nothing here to see that."""
+        if self.made_active:
+            return
+        foreground = user32.GetForegroundWindow()
+        if foreground == self.hwnd:
+            return
+        if same_firefox(foreground, self.hwnd):
+            raise WindowInputUnavailable('the person is using another window of this Firefox, '
+                                         'which is the only one that can take keys right now')
+        self.made_active = True
+        pending = activated.pop(self.hwnd, None)
+        if pending:
+            pending.cancel()
+        self.post(WM_ACTIVATE, WA_ACTIVE, 0)
+        await asyncio.sleep(ACTIVATE_SETTLE_S)
 
     # Positions
 
@@ -283,6 +348,7 @@ class WindowInput:
 
     async def press(self, context, combo: str):
         """A key, or a combination such as "Control+a" or "Shift+Tab" """
+        await self.make_active()
         names = [part for part in combo.split('+') if part] if len(combo) > 1 else [combo]
         *modifier_names, key = names
         modifiers = []
@@ -337,6 +403,7 @@ class WindowInput:
         # goes through another way before any of it is typed
         if any(ord(char) > 0xFFFF for char in text):
             raise WindowInputUnavailable('Emoji cannot be typed through window messages')
+        await self.make_active()
         # A line break goes in as Shift+Enter, as in bidi.py: a plain Enter
         # sends the message in chat boxes
         sent = 0
