@@ -279,16 +279,14 @@ test is fine.
 2. Rename `## [Unreleased]` in `CHANGELOG.md` to `## [1.2.0] - <date>` and add
    the link reference at the bottom
 3. `scripts/check-version.sh 1.2.0` — fails unless all five files agree
-4. Commit, then tag: `git tag -a v1.2.0 -m "..."` and push the tag
+4. Merge it, then sign and publish by hand:
+   `web-ext sign --channel unlisted` from `extension/` with the AMO key, then
+   `gh release create v1.2.0 --target <merge commit>` with the signed xpi attached
 
-Pushing the tag is the whole release. `.github/workflows/release.yml` re-checks
-the version, runs the full suite, builds the artifacts, publishes a signed
-provenance attestation for them, creates the GitHub release with notes taken
-from the changelog section, and submits the extension to addons.mozilla.org.
-
-The AMO step runs in the `amo` deployment environment, which holds the API
-credentials and requires a human to approve the deployment. Nothing else in
-either workflow can reach those secrets.
+The tag does not run `.github/workflows/release.yml`, on purpose: its AMO job
+submits to the public listing, and the add-on isn't on it yet. Bring the tag
+trigger back when it is. The AMO job runs in the `amo` deployment environment,
+which holds the API credentials and needs a human to approve the deployment.
 
 To rehearse without releasing anything, run the workflow by hand from the
 Actions tab and give it a version. It verifies and builds; it publishes nothing
