@@ -2860,6 +2860,10 @@ class FoxMCPTools:
 
             On a <select>, picks the option whose value or label is the text.
 
+            With real input and no ref, selector or field, types at the caret of
+            the field that has the focus, leaving its text in place (clear does
+            not apply). With clear=False and a target, adds to the end of the text.
+
             Args:
                 tab_id: ID of the tab
                 text: Text to enter
@@ -2885,11 +2889,23 @@ class FoxMCPTools:
                                  if data["emptied"] else ", and left it; the text is still in the field")
                 return f"Typed into {into}{how}{committed}"
 
+            at_caret = not (ref or selector or field)
+
             async def type_for_real(bidi, context, element):
-                await bidi.click(context, element)
-                if clear:
-                    await bidi.press(context, "Control+a")
-                    await bidi.press(context, "Backspace")
+                if at_caret:
+                    if element is None:
+                        raise ValueError("Typing at the caret needs add-on 1.13 or later: update it, or pass a ref")
+                else:
+                    await bidi.click(context, element)
+                    if clear:
+                        await bidi.press(context, "Control+a")
+                        await bidi.press(context, "Backspace")
+                    else:
+                        # The click landed mid-text
+                        _, error = await page_request({"action": "content.caret_to_end",
+                                                       "data": target(tab_id, ref, selector, field)})
+                        if error:
+                            raise RuntimeError(error)
                 await bidi.type_text(context, text)
 
             real = await real_input(tab_id, ref, selector, "type", type_for_real, target_name=field)
@@ -2901,7 +2917,7 @@ class FoxMCPTools:
                 found = {"tabId": tab_id, "ref": None, "selector": prep.get("selector")}
                 checked, error = await page_request({
                     "action": "content.check_typed",
-                    "data": {**found, "text": text, "clear": clear, "commit": commit, "submit": submit,
+                    "data": {**found, "text": text, "clear": clear and not at_caret, "commit": commit, "submit": submit,
                              "token": prep["token"]}
                 })
                 if error:
@@ -2919,6 +2935,9 @@ class FoxMCPTools:
                 return typed(checked.get('typed'), checked, how)
             if real is not SCRIPTED_ONLY and (refusal := scripted_refusal("type")):
                 return refusal
+            if at_caret:
+                why = REAL_INPUT_MISS.get() or "this browser has no real input right now"
+                return f"Did not type: typing at the caret needs real input, and {why}. Pass a ref, selector or field."
             data, error = await page_request({
                 "action": "content.type",
                 "data": {**target(tab_id, ref, selector, field),

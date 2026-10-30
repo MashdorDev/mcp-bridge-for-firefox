@@ -584,6 +584,57 @@ function checkTyped(el, text, cleared) {
   }
 }
 
+// Window messages arrive one at a time and editors apply them on their own
+// schedule, so the text can still be coming in. Reporting it as partial then
+// tempts a retry, which doubles the text. So: a verdict only once the field has
+// stopped changing.
+const TYPED_STILL_MS = 1000;
+const TYPED_WAIT_MAX_MS = 15000;
+async function checkTypedSettled(el, text, cleared) {
+  const started = Date.now();
+  let length = -1, changedAt = started;
+  for (;;) {
+    try {
+      return checkTyped(el, text, cleared);
+    } catch (error) {
+      const now = (el.isContentEditable ? editingHost(el).innerText : el.value || '').length;
+      if (now !== length) { length = now; changedAt = Date.now(); }
+      if (Date.now() - changedAt >= TYPED_STILL_MS || Date.now() - started >= TYPED_WAIT_MAX_MS) throw error;
+    }
+    const before = Date.now();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    // A busy page is not a still one: it may be about to apply the rest
+    if (Date.now() - before > 3 * 100) changedAt = Date.now();
+  }
+}
+
+// The field keys go to when content_type names none, or an error: without one
+// they would land on the page's own shortcuts
+function focusedField() {
+  const el = document.activeElement;
+  // A space on a focused checkbox or submit button would press it
+  const notText = ['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'color', 'range', 'hidden'];
+  if (el && (el.isContentEditable || (el instanceof HTMLTextAreaElement && !el.readOnly && !el.disabled)
+      || (el instanceof HTMLInputElement && !el.readOnly && !el.disabled && !notText.includes(el.type)))) return el;
+  throw new Error('No ref, selector or field was given and no editable field in this page has the focus ' +
+    '(one in a frame or a shadow root cannot be seen from here)');
+}
+
+// Where added text goes: the click that focused the field landed mid-text, and
+// Control+End does not move the caret on every platform or through window input
+function caretToEnd(el) {
+  if (!el.isContentEditable) {
+    if (el.setSelectionRange && typeof el.value === 'string') {
+      // Number and email inputs throw here, and keep their caret at the end anyway
+      try { el.setSelectionRange(el.value.length, el.value.length); } catch (error) { /* see above */ }
+    }
+    return;
+  }
+  const selection = el.ownerDocument.getSelection();
+  selection.selectAllChildren(editingHost(el));
+  selection.collapseToEnd();
+}
+
 // Submits the form of a field the page replaced on blur, which a key press can
 // no longer reach. Returns why it could not, for the tool to say so.
 function submitReplacedField(form) {
@@ -1472,7 +1523,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       // can find this tab among BiDi's browsing contexts, whose ids are
       // unrelated to the extension's tab ids.
       case 'realInputPrep': {
-        const el = hasTarget(data) ? findTarget(data) : null;
+        const el = hasTarget(data) ? findTarget(data) : data.purpose === 'type' ? focusedField() : null;
         if (data.purpose === 'click') pendingClicks.set(data.token, pageState(el));
         const watched = { click: el && 'pointer', key: !inFrame(el || document.activeElement) && 'keys',
           type: el && !(el instanceof HTMLSelectElement) && 'keys' }[data.purpose];
@@ -1587,11 +1638,20 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
         break;
       }
 
+      case 'caretToEnd': {
+        caretToEnd(findTarget(data));
+        sendResponse({ moved: true });
+        break;
+      }
+
       case 'checkTypedText': {
         const el = findTarget(data);
         realInputArrived(data.token).then(async arrived => {
           try {
-            checkTyped(el, data.text, data.clear);
+            // Adding text the field already holds passes the check below, so
+            // keys that went nowhere have to be caught here
+            if (arrived === false && !data.clear) throw new Error('no key presses');
+            await checkTypedSettled(el, data.text, data.clear);
           } catch (error) {
             throw arrived === false ? new Error('The page got no real key presses, so the text most likely ' +
               'did not arrive (is the Firefox window behind another one?). Check the page before typing again: ' +

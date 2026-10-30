@@ -1317,6 +1317,7 @@ async function handleContentAction(id, action, data) {
         }
         break;
 
+      case 'content.caret_to_end':
       case 'content.real_input_prep':
       case 'content.real_pointer_prep':
       case 'content.hover':
@@ -1332,7 +1333,7 @@ async function handleContentAction(id, action, data) {
         const pageAction = { 'content.snapshot': 'snapshot', 'content.click': 'click',
           'content.type': 'type', 'content.press_key': 'pressKey',
           'content.capture_file_input': 'captureFileInput', 'content.real_input_prep': 'realInputPrep',
-          'content.check_typed': 'checkTypedText', 'content.real_pointer_prep': 'realPointerPrep',
+          'content.check_typed': 'checkTypedText', 'content.caret_to_end': 'caretToEnd', 'content.real_pointer_prep': 'realPointerPrep',
           'content.real_input_arrived': 'realInputArrived',
           'content.hover': 'hover', 'content.drag': 'drag', 'content.click_effect': 'clickEffect' }[action];
         // Real input posted to the window lands in the tab showing in it
