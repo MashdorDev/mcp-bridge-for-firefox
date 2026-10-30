@@ -24,6 +24,7 @@ Licensed under the MIT License - see LICENSE file for details
 
 import asyncio
 import atexit
+import re
 import sys
 from typing import Any, Dict, List
 
@@ -96,15 +97,15 @@ def clipboard_sequence() -> int:
     return user32.GetClipboardSequenceNumber()
 
 
-def firefox_windows() -> List[int]:
-    """Visible, not minimised Firefox windows, front to back"""
+def firefox_windows(minimised: bool = False) -> List[int]:
+    """Visible Firefox windows, front to back, by default without minimised ones"""
     found = []
 
     @EnumWindowsProc
     def visit(hwnd, _):
         name = ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(hwnd, name, 64)
-        if name.value == 'MozillaWindowClass' and user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
+        if name.value == 'MozillaWindowClass' and user32.IsWindowVisible(hwnd) and (minimised or not user32.IsIconic(hwnd)):
             found.append(hwnd)
         return True
 
@@ -176,6 +177,30 @@ if AVAILABLE:
     atexit.register(step_all_down)
 
 
+def shows_page(window: str, page: str) -> bool:
+    """Whether a window's title is this page's title and nothing else but the
+    browser's name: a tab called "Inbox - Draft" must not pass for "Inbox" """
+    if not page or not window.startswith(page):
+        return False
+    rest = window[len(page):]
+    return not rest or re.fullmatch(r' [\u2014\u2013-] [^\u2014\u2013-]*', rest) is not None
+
+
+def hidden_window(title: str, x: int, y: int) -> int:
+    """The window of a tab that reads as hidden. A covered one is still where it
+    was, so position and title both have to agree, as for a visible one. A
+    minimised one has no position, so only a minimised window can qualify, never
+    one the person may be using, and the title has to pick out exactly one."""
+    covered = [hwnd for hwnd in firefox_windows() if window_contains(hwnd, x, y) and shows_page(window_title(hwnd), title)]
+    if covered:
+        return covered[0]
+    minimised = [hwnd for hwnd in firefox_windows(minimised=True)
+                 if user32.IsIconic(hwnd) and shows_page(window_title(hwnd), title)]
+    if len(minimised) != 1:
+        raise WindowNotShowing("the tab's Firefox window could not be told apart from the others")
+    return minimised[0]
+
+
 class WindowInput:
     """Input for one tab, through its Firefox window: `async with WindowInput(prep) as win:`
 
@@ -191,11 +216,8 @@ class WindowInput:
         screen = prep.get('screen')
         if not screen:
             raise WindowInputUnavailable('The page did not say where it is on screen')
-        # Messages to a window that does not show the tab (minimised, or the
-        # tab is behind another) produce no events, while the tool would still
-        # report a real click; scripted events are the honest fallback
-        if screen.get('hidden'):
-            raise WindowNotShowing('the tab is not showing (its window is minimised or covered)')
+        # A covered or minimised window reads as hidden and still takes input
+        self.hidden = bool(screen.get('hidden'))
         self.origin = (screen['x'], screen['y'])
         self.dpr = screen['dpr'] or 1
         self.title = screen.get('title') or ''
@@ -208,6 +230,12 @@ class WindowInput:
 
     async def __aenter__(self):
         x, y = self.screen_point(0, 0)
+        if self.hidden:
+            # The tab may not have come up yet, and hidden no longer says so
+            await asyncio.sleep(ACTIVATE_SETTLE_S)
+            self.hwnd = hidden_window(self.title, x, y)
+            self.thread = user32.GetWindowThreadProcessId(self.hwnd, None)
+            return self
         windows = [hwnd for hwnd in firefox_windows() if window_contains(hwnd, x, y)]
         # Firefox names its window after the page showing in it, which picks
         # the right one when two Firefox windows overlap there
@@ -253,9 +281,20 @@ class WindowInput:
         return round((self.origin[0] + x) * self.dpr), round((self.origin[1] + y) * self.dpr)
 
     def client_point(self, x: float, y: float):
+        # Read now rather than on entry: the person can minimise it mid-drag
+        if user32.IsIconic(self.hwnd):
+            # Windows moves it off screen, and the restored position is no help
+            # for a maximised one: a click aimed from it could hit the wrong thing
+            raise WindowInputUnavailable('its window is minimised, where a click cannot be aimed (keys still work)')
         sx, sy = self.screen_point(x, y)
         point = wintypes.POINT(sx, sy)
         user32.ScreenToClient(self.hwnd, ctypes.byref(point))
+        # A position from before the window was restored wraps round in the
+        # message's 16 bits to some other place inside it
+        area = wintypes.RECT()
+        user32.GetClientRect(self.hwnd, ctypes.byref(area))
+        if not (0 <= point.x < area.right and 0 <= point.y < area.bottom):
+            raise WindowInputUnavailable('the page is no longer where it said it was')
         return point.x, point.y
 
     def post(self, message: int, wparam: int, lparam: int):
