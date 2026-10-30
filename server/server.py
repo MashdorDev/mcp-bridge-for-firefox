@@ -133,11 +133,13 @@ def port_is_free(port: int) -> bool:
             with socket.socket(family, socket.SOCK_STREAM) as sock:
                 if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-                else:
-                    # Elsewhere SO_REUSEADDR still refuses a port someone listens
+                elif sys.platform.startswith('linux'):
+                    # On Linux SO_REUSEADDR still refuses a port someone listens
                     # on, but not one left in TIME_WAIT by a server that just
                     # stopped. Without it a restarted server took the next port
                     # while the extension and the tests looked for this one.
+                    # Not on macOS, where it would also allow a port another
+                    # program listens on through the wildcard address.
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind((address, port))
         except OSError as e:
@@ -1241,8 +1243,9 @@ class FoxMCPServer:
                 await server_task
             except asyncio.CancelledError:
                 pass
-
-            await self._stop()
+            finally:
+                # Also when the task had already failed: its MCP port is still held
+                await self._stop()
 
         except Exception as e:
             logger.warning(f"Error during server shutdown: {e}")
