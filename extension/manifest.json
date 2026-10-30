@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "MCP Bridge for Firefox",
-  "version": "1.11.1",
+  "version": "1.12.0",
   "description": "Let Claude, Cursor or any MCP client use your Firefox: read pages, click, type, upload files and take screenshots, with no automation mode.",
   "author": "Dor Zairi (based on FoxMCP by ThinkerYzu)",
   "homepage_url": "https://github.com/MashdorDev/mcp-bridge-for-firefox",
