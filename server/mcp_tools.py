@@ -2896,11 +2896,16 @@ class FoxMCPTools:
                     if element is None:
                         raise ValueError("Typing at the caret needs add-on 1.13 or later: update it, or pass a ref")
                 else:
-                    # A click lands mid-text, so adding to what is there starts from its end
                     await bidi.click(context, element)
-                    await bidi.press(context, "Control+a" if clear else "Control+End")
                     if clear:
+                        await bidi.press(context, "Control+a")
                         await bidi.press(context, "Backspace")
+                    else:
+                        # The click landed mid-text
+                        _, error = await page_request({"action": "content.caret_to_end",
+                                                       "data": target(tab_id, ref, selector, field)})
+                        if error:
+                            raise RuntimeError(error)
                 await bidi.type_text(context, text)
 
             real = await real_input(tab_id, ref, selector, "type", type_for_real, target_name=field)
@@ -2930,6 +2935,9 @@ class FoxMCPTools:
                 return typed(checked.get('typed'), checked, how)
             if real is not SCRIPTED_ONLY and (refusal := scripted_refusal("type")):
                 return refusal
+            if at_caret:
+                why = REAL_INPUT_MISS.get() or "this browser has no real input right now"
+                return f"Did not type: typing at the caret needs real input, and {why}. Pass a ref, selector or field."
             data, error = await page_request({
                 "action": "content.type",
                 "data": {**target(tab_id, ref, selector, field),

@@ -601,7 +601,10 @@ async function checkTypedSettled(el, text, cleared) {
       if (now !== length) { length = now; changedAt = Date.now(); }
       if (Date.now() - changedAt >= TYPED_STILL_MS || Date.now() - started >= TYPED_WAIT_MAX_MS) throw error;
     }
+    const before = Date.now();
     await new Promise(resolve => setTimeout(resolve, 100));
+    // A busy page is not a still one: it may be about to apply the rest
+    if (Date.now() - before > 3 * 100) changedAt = Date.now();
   }
 }
 
@@ -609,9 +612,27 @@ async function checkTypedSettled(el, text, cleared) {
 // they would land on the page's own shortcuts
 function focusedField() {
   const el = document.activeElement;
-  if (el && (el.isContentEditable || el instanceof HTMLTextAreaElement
-      || (el instanceof HTMLInputElement && !el.readOnly && !el.disabled))) return el;
-  throw new Error('No ref, selector or field was given and no editable field has the focus');
+  // A space on a focused checkbox or submit button would press it
+  const notText = ['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'color', 'range', 'hidden'];
+  if (el && (el.isContentEditable || (el instanceof HTMLTextAreaElement && !el.readOnly && !el.disabled)
+      || (el instanceof HTMLInputElement && !el.readOnly && !el.disabled && !notText.includes(el.type)))) return el;
+  throw new Error('No ref, selector or field was given and no editable field in this page has the focus ' +
+    '(one in a frame or a shadow root cannot be seen from here)');
+}
+
+// Where added text goes: the click that focused the field landed mid-text, and
+// Control+End does not move the caret on every platform or through window input
+function caretToEnd(el) {
+  if (!el.isContentEditable) {
+    if (el.setSelectionRange && typeof el.value === 'string') {
+      // Number and email inputs throw here, and keep their caret at the end anyway
+      try { el.setSelectionRange(el.value.length, el.value.length); } catch (error) { /* see above */ }
+    }
+    return;
+  }
+  const selection = el.ownerDocument.getSelection();
+  selection.selectAllChildren(editingHost(el));
+  selection.collapseToEnd();
 }
 
 // Submits the form of a field the page replaced on blur, which a key press can
@@ -1617,10 +1638,19 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
         break;
       }
 
+      case 'caretToEnd': {
+        caretToEnd(findTarget(data));
+        sendResponse({ moved: true });
+        break;
+      }
+
       case 'checkTypedText': {
         const el = findTarget(data);
         realInputArrived(data.token).then(async arrived => {
           try {
+            // Adding text the field already holds passes the check below, so
+            // keys that went nowhere have to be caught here
+            if (arrived === false && !data.clear) throw new Error('no key presses');
             await checkTypedSettled(el, data.text, data.clear);
           } catch (error) {
             throw arrived === false ? new Error('The page got no real key presses, so the text most likely ' +
