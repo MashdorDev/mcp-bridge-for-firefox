@@ -1115,10 +1115,14 @@ const NAVIGATION_START_MS = 2000;
 const NAVIGATION_LOAD_MS = 15000;
 
 async function navigated(tabId, go) {
-  let onUpdated, onRequest, timer;
+  let onUpdated, onRequest, onRemoved, timer, startWindow;
   const finished = new Promise(resolve => {
     let loading = false;
-    timer = setTimeout(() => resolve(true), NAVIGATION_START_MS);
+    // Begins once the browser took the navigation, which a page's "leave this
+    // page?" prompt can hold up
+    startWindow = () => {
+      if (!loading) timer = setTimeout(() => resolve(true), NAVIGATION_START_MS);
+    };
     const started = () => {
       if (loading) return;
       loading = true;
@@ -1133,16 +1137,22 @@ async function navigated(tabId, go) {
       if (change.status === 'loading') started();
       else if (change.status === 'complete' && loading) resolve(true);
     };
+    onRemoved = id => {
+      if (id === tabId) resolve(false);
+    };
     browser.webRequest.onBeforeRequest.addListener(onRequest, { urls: ['<all_urls>'], types: ['main_frame'], tabId });
     browser.tabs.onUpdated.addListener(onUpdated);
+    browser.tabs.onRemoved.addListener(onRemoved);
   });
   try {
     await go();
+    startWindow();
     return await finished;
   } finally {
     clearTimeout(timer);
     browser.webRequest.onBeforeRequest.removeListener(onRequest);
     browser.tabs.onUpdated.removeListener(onUpdated);
+    browser.tabs.onRemoved.removeListener(onRemoved);
   }
 }
 
