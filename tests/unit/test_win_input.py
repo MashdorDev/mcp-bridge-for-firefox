@@ -159,6 +159,44 @@ def test_a_hidden_tab_can_still_come_up():
         WindowInput({'screen': {'x': 0, 'y': 0, 'dpr': 1, 'title': 'Page', 'hidden': True}})
 
 
+@pytest.mark.asyncio
+async def test_a_background_window_is_made_active_and_stepped_down_later(monkeypatch):
+    posted = []
+    monkeypatch.setattr(win_input, 'firefox_windows', lambda: [7])
+    monkeypatch.setattr(win_input, 'window_contains', lambda hwnd, x, y: True)
+    monkeypatch.setattr(win_input, 'window_title', lambda hwnd: 'Page - Firefox')
+    monkeypatch.setattr(win_input, 'ACTIVATE_SETTLE_S', 0)
+    monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: 99, raising=False)
+    monkeypatch.setattr(win_input.user32, 'GetWindowThreadProcessId', lambda hwnd, _: 1, raising=False)
+    monkeypatch.setattr(win_input.user32, 'PostMessageW', lambda h, m, w, l: posted.append((h, m, w)) or 1, raising=False)
+
+    async with WindowInput(PREP):
+        assert posted == [(7, win_input.WM_ACTIVATE, win_input.WA_ACTIVE)]
+    # The timer itself is asyncio: what matters is what it does when it fires
+    win_input.activated[7].cancel()
+    win_input.step_down(7)
+
+    assert posted[-1] == (7, win_input.WM_ACTIVATE, win_input.WA_INACTIVE)
+    assert not win_input.activated
+
+
+@pytest.mark.asyncio
+async def test_a_window_the_person_is_in_is_left_alone(monkeypatch):
+    posted = []
+    monkeypatch.setattr(win_input, 'firefox_windows', lambda: [7])
+    monkeypatch.setattr(win_input, 'window_contains', lambda hwnd, x, y: True)
+    monkeypatch.setattr(win_input, 'window_title', lambda hwnd: 'Page - Firefox')
+    monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: 7, raising=False)
+    monkeypatch.setattr(win_input.user32, 'GetWindowThreadProcessId', lambda hwnd, _: 1, raising=False)
+    monkeypatch.setattr(win_input.user32, 'PostMessageW', lambda h, m, w, l: posted.append((h, m, w)) or 1, raising=False)
+
+    async with WindowInput(PREP):
+        pass
+
+    assert posted == []
+    assert not win_input.activated
+
+
 def test_no_screen_position_is_not_worth_retrying():
     with pytest.raises(WindowInputUnavailable) as caught:
         WindowInput({})

@@ -11,6 +11,10 @@ the person's own mouse pointer never moves, so they can keep working while
 the agent clicks. The window does not need to be in front either; only the
 tab has to be the one showing in it, which the extension sees to.
 
+Keys reach only a window Firefox believes is active, and that belief comes
+from the WM_ACTIVATE it receives, not from Windows. Posting one gives the page
+focus while the person's own window stays in front and keeps their keyboard.
+
 Modifier keys are the one catch: Firefox reads them from the keyboard state of
 its input thread, not from the messages. So for a combination such as Alt+2
 this thread joins Firefox's input queue for a moment and sets that state.
@@ -39,6 +43,7 @@ if AVAILABLE:
     user32.VkKeyScanW.restype = ctypes.c_short
     EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
+WM_ACTIVATE, WA_INACTIVE, WA_ACTIVE = 0x006, 0, 1
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK = 0x200, 0x201, 0x202, 0x203
 WM_RBUTTONDOWN, WM_RBUTTONUP = 0x204, 0x205
 WM_MBUTTONDOWN, WM_MBUTTONUP = 0x207, 0x208
@@ -133,6 +138,23 @@ def key_lparam(vk: int, up: bool = False, alt: bool = False) -> int:
     return lparam
 
 
+# How long Firefox takes to act on a posted WM_ACTIVATE before keys can follow it
+ACTIVATE_SETTLE_S = 0.1
+# How long a background window stays active after the last action. Pages close
+# open menus when the window blurs, so stepping down after each action would
+# undo what the agent just opened before its next call.
+ACTIVE_FOR_S = 20.0
+# Background windows made active, and the timer that steps each one down
+activated: Dict[int, asyncio.TimerHandle] = {}
+
+
+def step_down(hwnd: int):
+    activated.pop(hwnd, None)
+    # Once the person has come to this window, its active state is theirs
+    if user32.GetForegroundWindow() != hwnd:
+        user32.PostMessageW(hwnd, WM_ACTIVATE, WA_INACTIVE, 0)
+
+
 class WindowInput:
     """Input for one tab, through its Firefox window: `async with WindowInput(prep) as win:`
 
@@ -177,10 +199,18 @@ class WindowInput:
             raise WindowNotShowing("the tab's Firefox window was not found (minimised?)")
         self.hwnd = hwnd
         self.thread = user32.GetWindowThreadProcessId(hwnd, None)
+        pending = activated.pop(hwnd, None)
+        if pending:
+            pending.cancel()
+        elif user32.GetForegroundWindow() != hwnd:
+            self.post(WM_ACTIVATE, WA_ACTIVE, 0)
+            await asyncio.sleep(ACTIVATE_SETTLE_S)
         return self
 
     async def __aexit__(self, *exc):
         self.release()
+        if self.hwnd and user32.GetForegroundWindow() != self.hwnd:
+            activated[self.hwnd] = asyncio.get_running_loop().call_later(ACTIVE_FOR_S, step_down, self.hwnd)
 
     # Positions
 
