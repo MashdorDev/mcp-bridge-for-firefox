@@ -23,6 +23,7 @@ Licensed under the MIT License - see LICENSE file for details
 """
 
 import asyncio
+import atexit
 import sys
 from typing import Any, Dict, List
 
@@ -148,11 +149,31 @@ ACTIVE_FOR_S = 20.0
 activated: Dict[int, asyncio.TimerHandle] = {}
 
 
+def same_firefox(one: int, other: int) -> bool:
+    """Firefox keeps one active window per process, so activating any window of
+    the one the person is in would lower the window they are using"""
+    pids = [wintypes.DWORD(), wintypes.DWORD()]
+    user32.GetWindowThreadProcessId(one, ctypes.byref(pids[0]))
+    user32.GetWindowThreadProcessId(other, ctypes.byref(pids[1]))
+    return pids[0].value == pids[1].value
+
+
 def step_down(hwnd: int):
     activated.pop(hwnd, None)
-    # Once the person has come to this window, its active state is theirs
-    if user32.GetForegroundWindow() != hwnd:
+    # Once the person has come to this Firefox, its active state is theirs
+    if not same_firefox(user32.GetForegroundWindow(), hwnd):
         user32.PostMessageW(hwnd, WM_ACTIVATE, WA_INACTIVE, 0)
+
+
+def step_all_down():
+    """A window left active reports focus to its pages until someone uses it"""
+    for hwnd, timer in list(activated.items()):
+        timer.cancel()
+        step_down(hwnd)
+
+
+if AVAILABLE:
+    atexit.register(step_all_down)
 
 
 class WindowInput:
@@ -183,6 +204,7 @@ class WindowInput:
         self.thread = 0
         self.buttons = 0
         self.attached = False
+        self.made_active = False
 
     async def __aenter__(self):
         x, y = self.screen_point(0, 0)
@@ -199,18 +221,31 @@ class WindowInput:
             raise WindowNotShowing("the tab's Firefox window was not found (minimised?)")
         self.hwnd = hwnd
         self.thread = user32.GetWindowThreadProcessId(hwnd, None)
-        pending = activated.pop(hwnd, None)
-        if pending:
-            pending.cancel()
-        elif user32.GetForegroundWindow() != hwnd:
-            self.post(WM_ACTIVATE, WA_ACTIVE, 0)
-            await asyncio.sleep(ACTIVATE_SETTLE_S)
         return self
 
     async def __aexit__(self, *exc):
         self.release()
-        if self.hwnd and user32.GetForegroundWindow() != self.hwnd:
+        if self.made_active:
             activated[self.hwnd] = asyncio.get_running_loop().call_later(ACTIVE_FOR_S, step_down, self.hwnd)
+
+    async def make_active(self):
+        """Let this window take keys, once per action. Posted every time rather
+        than remembered: leaving Firefox after using it, or a detach from its
+        input queue, makes it inactive again with nothing here to see that."""
+        if self.made_active:
+            return
+        foreground = user32.GetForegroundWindow()
+        if foreground == self.hwnd:
+            return
+        if same_firefox(foreground, self.hwnd):
+            raise WindowInputUnavailable('the person is using another window of this Firefox, '
+                                         'which is the only one that can take keys right now')
+        self.made_active = True
+        pending = activated.pop(self.hwnd, None)
+        if pending:
+            pending.cancel()
+        self.post(WM_ACTIVATE, WA_ACTIVE, 0)
+        await asyncio.sleep(ACTIVATE_SETTLE_S)
 
     # Positions
 
@@ -313,6 +348,7 @@ class WindowInput:
 
     async def press(self, context, combo: str):
         """A key, or a combination such as "Control+a" or "Shift+Tab" """
+        await self.make_active()
         names = [part for part in combo.split('+') if part] if len(combo) > 1 else [combo]
         *modifier_names, key = names
         modifiers = []
@@ -367,6 +403,7 @@ class WindowInput:
         # goes through another way before any of it is typed
         if any(ord(char) > 0xFFFF for char in text):
             raise WindowInputUnavailable('Emoji cannot be typed through window messages')
+        await self.make_active()
         # A line break goes in as Shift+Enter, as in bidi.py: a plain Enter
         # sends the message in chat boxes
         sent = 0
