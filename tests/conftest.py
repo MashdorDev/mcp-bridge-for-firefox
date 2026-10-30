@@ -112,6 +112,12 @@ async def server_with_extension():
         test_port = ports['websocket']
         mcp_port = ports['mcp']
 
+        # Before the server starts: a skip from here on would leave it running,
+        # holding its ports for every later test
+        firefox_path = resolve_firefox_path()
+        if not firefox_path:
+            pytest.skip("Firefox not found; set FIREFOX_PATH to the binary")
+
         # Create server
         server = FoxMCPServer(
             host="localhost",
@@ -123,11 +129,6 @@ async def server_with_extension():
         # Start server
         server_task = asyncio.create_task(server.start_server())
         await asyncio.sleep(0.1)  # Let server start
-
-        # Check Firefox path
-        firefox_path = resolve_firefox_path()
-        if not firefox_path:
-            pytest.skip("Firefox not found; set FIREFOX_PATH to the binary")
 
         firefox = FirefoxTestManager(
             firefox_path=firefox_path,

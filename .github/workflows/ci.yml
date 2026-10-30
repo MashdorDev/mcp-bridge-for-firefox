@@ -78,8 +78,11 @@ jobs:
           if suite.tag == "testsuites":
               suite = suite[0]
           total = int(suite.get("tests", 0))
-          skipped = int(suite.get("skipped", 0))
-          print(f"{total} tests, {skipped} skipped")
+          # Window input cannot run on this Linux runner; anything else skipping is a broken environment
+          skipped = sum(1 for case in suite.iter("testcase")
+                        if (skip := case.find("skipped")) is not None
+                        and "Windows only" not in skip.get("message", ""))
+          print(f"{total} tests, {skipped} skipped (Windows-only tests not counted)")
 
           if skipped:
               sys.exit(f"{skipped} tests skipped; the suite expects none.")

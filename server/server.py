@@ -133,6 +133,14 @@ def port_is_free(port: int) -> bool:
             with socket.socket(family, socket.SOCK_STREAM) as sock:
                 if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                elif sys.platform.startswith('linux'):
+                    # On Linux SO_REUSEADDR still refuses a port someone listens
+                    # on, but not one left in TIME_WAIT by a server that just
+                    # stopped. Without it a restarted server took the next port
+                    # while the extension and the tests looked for this one.
+                    # Not on macOS, where it would also allow a port another
+                    # program listens on through the wildcard address.
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind((address, port))
         except OSError as e:
             if family == socket.AF_INET6 and getattr(e, 'errno', None) in (97, 10047, 99, 10049):
@@ -1101,23 +1109,22 @@ class FoxMCPServer:
         # Create shutdown event
         self._shutdown_event = threading.Event()
 
+        # Created here rather than in the thread, so a shutdown that comes
+        # before the thread gets going still finds the server to stop. One that
+        # found nothing let the thread start uvicorn afterwards, which then held
+        # the port for every later server in the process.
+        self.mcp_http_app = self.mcp_app.http_app()
+        config = uvicorn.Config(
+            self.mcp_http_app,
+            host=self.host,
+            port=self.mcp_port,
+            log_level="error"  # Reduce log noise during tests
+        )
+        self.mcp_server_instance = uvicorn.Server(config)
+
         def run_mcp_server():
             try:
                 logger.info(f"Starting MCP server on {self.host}:{self.mcp_port}")
-
-                # Create server config
-                self.mcp_http_app = self.mcp_app.http_app()
-                config = uvicorn.Config(
-                    self.mcp_http_app,
-                    host=self.host,
-                    port=self.mcp_port,
-                    log_level="error"  # Reduce log noise during tests
-                )
-
-                # Create server instance
-                self.mcp_server_instance = uvicorn.Server(config)
-
-                # Run server
                 self.mcp_server_instance.run()
 
             except Exception as e:
@@ -1227,10 +1234,8 @@ class FoxMCPServer:
             server_task: asyncio.Task running the server
         """
         try:
-            # Stop server resources first
-            await self._stop()
-
-            # Cancel the task
+            # Cancel the task first, so a server still starting cannot start
+            # anything more after its resources were stopped
             server_task.cancel()
 
             # Wait for task to finish, handling CancelledError
@@ -1238,6 +1243,9 @@ class FoxMCPServer:
                 await server_task
             except asyncio.CancelledError:
                 pass
+            finally:
+                # Also when the task had already failed: its MCP port is still held
+                await self._stop()
 
         except Exception as e:
             logger.warning(f"Error during server shutdown: {e}")
