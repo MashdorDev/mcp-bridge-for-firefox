@@ -2860,6 +2860,10 @@ class FoxMCPTools:
 
             On a <select>, picks the option whose value or label is the text.
 
+            With real input and no ref, selector or field, types at the caret of
+            the field that has the focus, leaving its text in place (clear does
+            not apply). With clear=False and a target, adds to the end of the text.
+
             Args:
                 tab_id: ID of the tab
                 text: Text to enter
@@ -2885,11 +2889,18 @@ class FoxMCPTools:
                                  if data["emptied"] else ", and left it; the text is still in the field")
                 return f"Typed into {into}{how}{committed}"
 
+            at_caret = not (ref or selector or field)
+
             async def type_for_real(bidi, context, element):
-                await bidi.click(context, element)
-                if clear:
-                    await bidi.press(context, "Control+a")
-                    await bidi.press(context, "Backspace")
+                if at_caret:
+                    if element is None:
+                        raise ValueError("Typing at the caret needs add-on 1.13 or later: update it, or pass a ref")
+                else:
+                    # A click lands mid-text, so adding to what is there starts from its end
+                    await bidi.click(context, element)
+                    await bidi.press(context, "Control+a" if clear else "Control+End")
+                    if clear:
+                        await bidi.press(context, "Backspace")
                 await bidi.type_text(context, text)
 
             real = await real_input(tab_id, ref, selector, "type", type_for_real, target_name=field)
@@ -2901,7 +2912,7 @@ class FoxMCPTools:
                 found = {"tabId": tab_id, "ref": None, "selector": prep.get("selector")}
                 checked, error = await page_request({
                     "action": "content.check_typed",
-                    "data": {**found, "text": text, "clear": clear, "commit": commit, "submit": submit,
+                    "data": {**found, "text": text, "clear": clear and not at_caret, "commit": commit, "submit": submit,
                              "token": prep["token"]}
                 })
                 if error:
