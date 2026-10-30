@@ -9,7 +9,7 @@ import pytest
 
 import test_imports  # Automatic path setup
 from server import win_input
-from server.win_input import (WindowInput, WindowInputUnavailable, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
+from server.win_input import (WindowInput, WindowInputUnavailable, WindowNotShowing, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
                               WM_SYSKEYDOWN, WM_SYSKEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
                               WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON,
                               WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON, VK_MBUTTON, VK_RBUTTON,
@@ -151,3 +151,15 @@ async def test_another_firefox_window_at_the_same_spot_is_never_used(monkeypatch
     with pytest.raises(WindowInputUnavailable):
         async with WindowInput(PREP):
             pass
+
+
+def test_a_hidden_tab_can_still_come_up():
+    """Right after a tab is activated it can still read as hidden: the tool retries this one"""
+    with pytest.raises(WindowNotShowing):
+        WindowInput({'screen': {'x': 0, 'y': 0, 'dpr': 1, 'title': 'Page', 'hidden': True}})
+
+
+def test_no_screen_position_is_not_worth_retrying():
+    with pytest.raises(WindowInputUnavailable) as caught:
+        WindowInput({})
+    assert not isinstance(caught.value, WindowNotShowing)

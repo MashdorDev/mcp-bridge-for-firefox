@@ -202,6 +202,12 @@ class FoxMCPServer:
         self.use_stdio = use_stdio
         # Refuse the scripted fallback for clicks, keys, typing, hovers and drags
         self.real_input_only = real_input_only
+        # Real input acts on whichever tab is showing, so one action at a time,
+        # from activating its tab to the last event: another client activating
+        # its tab mid-click would get this one's click. One lock rather than one
+        # per browser, because requests follow the active browser, which
+        # browsers_select can change mid-call.
+        self.real_input_turn = asyncio.Lock()
 
         # In stdio mode the MCP side has no listener, so there is no port to pick.
         # Running the selection anyway would bind-test a port nothing serves and

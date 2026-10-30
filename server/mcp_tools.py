@@ -30,10 +30,10 @@ from fastmcp.utilities.types import Image
 
 try:
     from .bidi import LIKELY_PORTS, BidiSession, BidiUnavailable, listening_ports
-    from .win_input import AVAILABLE as WINDOW_INPUT, WindowInput, WindowInputUnavailable, clipboard_sequence
+    from .win_input import AVAILABLE as WINDOW_INPUT, WindowInput, WindowInputUnavailable, WindowNotShowing, clipboard_sequence
 except ImportError:
     from bidi import LIKELY_PORTS, BidiSession, BidiUnavailable, listening_ports
-    from win_input import AVAILABLE as WINDOW_INPUT, WindowInput, WindowInputUnavailable, clipboard_sequence
+    from win_input import AVAILABLE as WINDOW_INPUT, WindowInput, WindowInputUnavailable, WindowNotShowing, clipboard_sequence
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,10 @@ COPY_WAIT_S = 1.5
 MODIFIED_KEY = re.compile(r"(^|\+)(control|ctrl|alt|meta|command)\+", re.IGNORECASE)
 # real_input's answer for a target only the scripted path can work
 SCRIPTED_ONLY = object()
+# Why this call has no real input, for the refusal to say which case it is
+REAL_INPUT_MISS = contextvars.ContextVar("real_input_miss", default="")
+# Firefox updates a window's title and a tab's visibility shortly after activating it
+WINDOW_SETTLE_DELAYS = (0.2, 0.4, 0.8)
 
 # Where a screenshot given a bare file name is saved, rather than wherever the
 # server happens to run from (a client's project folder)
@@ -2446,7 +2450,14 @@ class FoxMCPTools:
             """
             server = self.websocket_server
             if not getattr(server, 'real_input_enabled', lambda: False)():
+                REAL_INPUT_MISS.set("no browser is connected right now" if not getattr(server, 'extension_connection', None)
+                                    else "real input is off in this browser's add-on settings")
                 return None
+            async with server.real_input_turn:
+                return await real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name)
+
+        async def real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name):
+            server = self.websocket_server
             ports = []
             if server.real_input_allowed():
                 ports = server.real_input_ports()
@@ -2454,6 +2465,7 @@ class FoxMCPTools:
                     # No port set and none found yet: the usual ones that are open
                     ports = await listening_ports(LIKELY_PORTS)
             if not WINDOW_INPUT and not ports:
+                REAL_INPUT_MISS.set("no Firefox under remote control was found (start it with --remote-debugging-port)")
                 return None
             token = uuid.uuid4().hex
             message = prep_message(token) if prep_message else {
@@ -2482,13 +2494,28 @@ class FoxMCPTools:
                 return prep, None
 
             if WINDOW_INPUT:
-                try:
-                    async with WindowInput(prep) as window:
-                        return await run(window, window.hwnd)
-                except WindowInputUnavailable as unavailable:
-                    logger.info(f"No window input: {unavailable}")
-                except (RuntimeError, ValueError) as failure:
-                    return None, str(failure)
+                for delay in (*WINDOW_SETTLE_DELAYS, None):
+                    try:
+                        async with WindowInput(prep) as window:
+                            return await run(window, window.hwnd)
+                    except WindowNotShowing as unavailable:
+                        logger.info(f"No window input yet: {unavailable}")
+                        REAL_INPUT_MISS.set(str(unavailable))
+                        if delay is None:
+                            break
+                        await asyncio.sleep(delay)
+                        prep, error = await page_request(message)
+                        if error:
+                            return None, error
+                        if prep.get("scripted"):
+                            return SCRIPTED_ONLY
+                        prep["token"] = token
+                    except WindowInputUnavailable as unavailable:
+                        logger.info(f"No window input: {unavailable}")
+                        REAL_INPUT_MISS.set(str(unavailable))
+                        break
+                    except (RuntimeError, ValueError) as failure:
+                        return None, str(failure)
             # Only the Firefox holding this tab finds the token, so with several
             # profiles under remote control the right one picks itself
             for port in ports:
@@ -2514,11 +2541,9 @@ class FoxMCPTools:
             """
             if not getattr(self.websocket_server, 'real_input_only', False):
                 return None
-            return (f"Did not {action}: the server runs with real input only, and this browser "
-                    "has no real input right now. Turn real input on in the add-on's settings "
-                    "(on Windows it needs add-on 1.9 or later; elsewhere start Firefox with "
-                    "--remote-debugging-port), or start the server without --real-input-only "
-                    "to allow scripted events.")
+            why = REAL_INPUT_MISS.get() or "this browser has no real input right now"
+            return (f"Did not {action}: the server runs with real input only, and {why}. "
+                    "Start the server without --real-input-only to allow scripted events.")
 
         def spot(tab_id, ref=None, selector=None, x=None, y=None, side="", name=None):
             """An element or a viewport point, as the content script takes it"""
