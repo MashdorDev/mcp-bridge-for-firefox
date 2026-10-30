@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Navigation tools answer once the new page has loaded.** A read right after `navigation_go_to_url`, back, forward or reload could return the page before it, so refs from it failed. They wait up to 15 s, then say the page is still loading.
+
 ## [1.12.0] - 2026-10-30
 
 ### Added

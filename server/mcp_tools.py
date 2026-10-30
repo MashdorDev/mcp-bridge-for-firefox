@@ -2157,6 +2157,12 @@ class FoxMCPTools:
             """Parameters for navigating back"""
             tab_id: int = Field(description="ID of the tab to navigate back in")
 
+        def still_loading(response: Dict[str, Any]) -> str:
+            """Said when a navigation came back before its page finished loading"""
+            if response.get("data", {}).get("loaded") is False:
+                return "; the page is still loading, so reads may show it part-way"
+            return ""
+
         @self._tool()
         async def navigation_back(params: NavigationBackParams) -> str:
             """Navigate back in browser history for a tab"""
@@ -2176,7 +2182,7 @@ class FoxMCPTools:
                 return f"Error navigating back: {response['error']}"
 
             if response.get("type") == "response":
-                return f"Successfully navigated back in tab {params.tab_id}"
+                return f"Successfully navigated back in tab {params.tab_id}{still_loading(response)}"
             elif response.get("type") == "error":
                 error_msg = response.get("data", {}).get("message", "Unknown error")
                 return f"Failed to navigate back: {error_msg}"
@@ -2207,7 +2213,7 @@ class FoxMCPTools:
                 return f"Error navigating forward: {response['error']}"
 
             if response.get("type") == "response":
-                return f"Successfully navigated forward in tab {params.tab_id}"
+                return f"Successfully navigated forward in tab {params.tab_id}{still_loading(response)}"
             elif response.get("type") == "error":
                 error_msg = response.get("data", {}).get("message", "Unknown error")
                 return f"Failed to navigate forward: {error_msg}"
@@ -2245,7 +2251,7 @@ class FoxMCPTools:
 
             if response.get("type") == "response":
                 cache_text = " (bypassing cache)" if bypass_cache else ""
-                return f"Successfully reloaded tab {tab_id}{cache_text}"
+                return f"Successfully reloaded tab {tab_id}{cache_text}{still_loading(response)}"
             elif response.get("type") == "error":
                 error_msg = response.get("data", {}).get("message", "Unknown error")
                 return f"Failed to reload page: {error_msg}"
@@ -2278,7 +2284,7 @@ class FoxMCPTools:
                 return f"Error navigating to URL: {response['error']}"
 
             if response.get("type") == "response":
-                return f"Successfully navigated tab {tab_id} to {url}"
+                return f"Successfully navigated tab {tab_id} to {url}{still_loading(response)}"
             elif response.get("type") == "error":
                 error_msg = response.get("data", {}).get("message", "Unknown error")
                 return f"Failed to navigate to URL: {error_msg}"
