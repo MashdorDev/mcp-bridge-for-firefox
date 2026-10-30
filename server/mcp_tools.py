@@ -2849,10 +2849,14 @@ class FoxMCPTools:
                 if error:
                     return f"Failed to type: {error}"
                 how = " (real input)"
-                if submit and not checked.get("submitted"):
+                if checked.get("enterMissed"):
+                    how += f"; Enter was not pressed: {checked['enterMissed']}"
+                elif submit and not checked.get("submitted"):
                     pressed = await real_input(tab_id, None, prep.get("selector"), "key",
                                                lambda bidi, context, element: bidi.press(context, "Enter"))
-                    if pressed and pressed is not SCRIPTED_ONLY and pressed[1]:
+                    if pressed is None:
+                        how += "; Enter was not pressed: real input was not available for it"
+                    elif pressed is not SCRIPTED_ONLY and pressed[1]:
                         how += f"; Enter was not pressed: {pressed[1]}"
                 return typed(checked.get('typed'), checked, how)
             if real is not SCRIPTED_ONLY and (refusal := scripted_refusal("type")):
@@ -2864,7 +2868,8 @@ class FoxMCPTools:
             })
             if error:
                 return f"Failed to type: {error}"
-            return typed(data.get('typed'), data)
+            missed = f"; Enter was not pressed: {data['enterMissed']}" if data.get("enterMissed") else ""
+            return typed(data.get('typed'), data, missed)
 
         # Press Key Tool
         @self._tool()

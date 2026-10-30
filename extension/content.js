@@ -584,6 +584,15 @@ function checkTyped(el, text, cleared) {
   }
 }
 
+// Submits the form of a field the page replaced on blur, which a key press can
+// no longer reach. Returns why it could not, for the tool to say so.
+function submitReplacedField(form) {
+  if (!form || !form.isConnected) return 'the page replaced the field and there is no form left to submit';
+  if (!form.checkValidity()) return 'the form has a field that is not valid yet';
+  form.requestSubmit();
+  return null;
+}
+
 // The field typed into, or a note that the page replaced it, whose ref would
 // lead nowhere
 const typedField = el => el.isConnected ? describe(el) : 'a field the page has since replaced';
@@ -1436,12 +1445,13 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
           .then(async field => {
             const form = field.form;
             const emptied = data.commit ? await commitField(field, data.submit) : undefined;
+            let enterMissed = null;
             if (data.submit) {
               // A chip input that replaced the field leaves this one detached
-              if (field.isConnected || !form) pressKey(field, 'Enter');
-              else form.requestSubmit();
+              if (field.isConnected) pressKey(field, 'Enter');
+              else enterMissed = submitReplacedField(form);
             }
-            sendResponse({ typed: typedField(field), committed: Boolean(data.commit), emptied });
+            sendResponse({ typed: typedField(field), committed: Boolean(data.commit), emptied, enterMissed });
           })
           .catch(error => sendResponse({ error: error.message }));
         break;
@@ -1582,9 +1592,9 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const emptied = data.commit ? await commitField(el, data.submit) : undefined;
           // A chip input that replaced the field leaves nothing for a real
           // Enter to reach, so the form is submitted from here instead
-          const submitted = Boolean(data.submit && !el.isConnected && form);
-          if (submitted) form.requestSubmit();
-          sendResponse({ typed: typedField(el), committed: Boolean(data.commit), emptied, submitted });
+          const submitted = Boolean(data.submit && !el.isConnected);
+          const enterMissed = submitted ? submitReplacedField(form) : null;
+          sendResponse({ typed: typedField(el), committed: Boolean(data.commit), emptied, submitted, enterMissed });
         }).catch(error => sendResponse({ error: error.message }));
         break;
       }
