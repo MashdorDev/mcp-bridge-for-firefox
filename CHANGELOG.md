@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-10-30
+
 ### Fixed
 - **Navigation tools answer once the new page has loaded.** A read right after `navigation_go_to_url`, back, forward or reload could return the page before it, so refs from it failed. They wait up to 15 s, then say the page is still loading.
 - **Real keys work with Firefox in the background.** Keys posted to a window Firefox believed inactive went nowhere while the tool said "Pressed (real input)". Firefox now gets a window-level activation for the action, so the page takes trusted keys and combinations such as Control+a and Shift+Enter, while the window you are using stays in front and keeps your keyboard. It steps down after 20 s idle. If you are using another window of that Firefox, it leaves yours alone and says so. A covered window gets real input too, which used to be refused for as long as it stayed covered. A minimised one takes keys, and refuses clicks because they can't be aimed.
