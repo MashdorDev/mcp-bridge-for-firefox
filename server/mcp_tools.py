@@ -2450,9 +2450,10 @@ class FoxMCPTools:
             """
             server = self.websocket_server
             if not getattr(server, 'real_input_enabled', lambda: False)():
-                REAL_INPUT_MISS.set("real input is off in this browser's add-on settings")
+                REAL_INPUT_MISS.set("no browser is connected right now" if not getattr(server, 'extension_connection', None)
+                                    else "real input is off in this browser's add-on settings")
                 return None
-            async with server.real_input_turn():
+            async with server.real_input_turn:
                 return await real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name)
 
         async def real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name):

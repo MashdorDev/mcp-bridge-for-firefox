@@ -170,9 +170,6 @@ class BrowserConnection:
     real_input_port: int = 0
     real_input_found: int = 0
     real_input_missed_at: float = 0.0
-    # Real input acts on whichever tab is showing, so one action at a time:
-    # another client activating its tab mid-click would get this one's click
-    real_input_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # The tab the agent last named, which a screenshot shows by default
     last_tab: Optional[int] = None
 
@@ -205,6 +202,12 @@ class FoxMCPServer:
         self.use_stdio = use_stdio
         # Refuse the scripted fallback for clicks, keys, typing, hovers and drags
         self.real_input_only = real_input_only
+        # Real input acts on whichever tab is showing, so one action at a time,
+        # from activating its tab to the last event: another client activating
+        # its tab mid-click would get this one's click. One lock rather than one
+        # per browser, because requests follow the active browser, which
+        # browsers_select can change mid-call.
+        self.real_input_turn = asyncio.Lock()
 
         # In stdio mode the MCP side has no listener, so there is no port to pick.
         # Running the selection anyway would bind-test a port nothing serves and
@@ -331,10 +334,6 @@ class FoxMCPServer:
         """Whether the person allows real input in this browser at all"""
         browser = self.browsers.get(self.active_browser)
         return bool(browser and browser.real_input)
-
-    def real_input_turn(self) -> asyncio.Lock:
-        """Held for one real action in the active browser, from activating its tab to the last event"""
-        return self.browsers[self.active_browser].real_input_lock
 
     def real_input_allowed(self) -> bool:
         """Whether to try real input now: the person allows it, and it was not
