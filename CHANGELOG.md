@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-10-30
+
 ### Added
 - **`content_type(commit=True)` leaves the field after typing.** Chip and token inputs, such as Google Analytics' "Enter email addresses", turn the text into an entry only when focus moves away, and Enter submitted the form first, so Add answered "You must enter at least one email address". The field gets `blur`, `focusout` and `change` as a click elsewhere would give it, also in a Firefox window that is not in front, where `blur()` alone fires nothing. The result says whether the field emptied itself, which is how such inputs show they took the entry.
 
 ### Fixed
+- **Parallel clients no longer click each other's tabs.** Real input acts on whichever tab is showing, and nothing held the tab in place, so clicks reported as real could land on another client's tab: 18 clicks across 3 tabs arrived as 0, 6 and 10. Real actions now take turns. The lookup also waits a moment for Firefox to finish switching tabs, which is what caused most "no real input right now" refusals, and the refusal now says which case it is: setting off, browser disconnected, or tab not showing.
 - **The agent overlay keeps its look on pages with a strict style CSP.** Its styles were a `<style>` element and style attributes, which pages such as Teams block, so the "Working on this page" label showed as plain serif text in the top left and the cursor was drawn black and huge (a third of the window). The styles now come from a constructed stylesheet, which the page's CSP does not cover.
 - **Browsers come back sooner after `/mcp` restarts the server.** The add-on keeps retrying every 5 seconds while another session's server is still connected, instead of every 30 seconds once its first 50 attempts are used up. Right after the server starts, `browsers_list` waits up to 5 seconds for a browser and then says it is waiting for browsers to reconnect, rather than "No browser is connected". In a test with the slow interval reached, a restarted server had its browser back after 11.7 s instead of 20 s.
 - **The add-on's console stays quiet while the server is down.** It logs one line when the server is missing, one when the connection drops (with its port and close code) and one when it connects, instead of four lines for every attempt. Firefox's own "can't establish a connection" line for each attempt still shows.
