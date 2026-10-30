@@ -113,7 +113,7 @@ class TestType:
         assert stub_server.sent_request["action"] == "content.type"
         assert stub_server.sent_request["data"] == {
             "tabId": 4, "ref": None, "selector": "#name",
-            "text": "Dor", "clear": True, "submit": True}
+            "text": "Dor", "clear": True, "submit": True, "commit": False}
 
 
 class TestPressKey:
@@ -248,6 +248,35 @@ class TestFailuresAreErrors:
         tool = await FoxMCPTools(stub_server).mcp.get_tool("content_type")
 
         assert await tool.fn(tab_id=4, text="hello", selector="#t") == 'Typed into [r1] input "Name"'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("emptied, says", [
+        (True, "the field emptied, so it likely took the text as an entry"),
+        (False, "the text is still in the field"),
+    ])
+    async def test_commit_says_whether_the_field_took_the_text(self, stub_server, emptied, says):
+        # Chip inputs accept an address only when focus leaves them, and empty the field
+        stub_server.response = {"type": "response",
+                                 "data": {"typed": '[r1] input ""', "committed": True, "emptied": emptied}}
+        tool = await FoxMCPTools(stub_server).mcp.get_tool("content_type")
+
+        answer = await tool.fn(tab_id=4, text="a@example.org", selector="#t", commit=True)
+        assert answer == f'Typed into [r1] input "", and left it; {says}'
+        assert stub_server.sent_request["data"]["commit"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("data, says", [
+        # A <select> holds a choice, not text that could become an entry
+        ({"typed": '[r1] select "FR"', "committed": True, "emptied": None}, ", and left it"),
+        # An add-on from before commit ignores it and leaves the field focused
+        ({"typed": '[r1] select "FR"'}, ", but did not leave it: the add-on is too old for commit, update it"),
+    ])
+    async def test_commit_on_a_select_or_an_old_add_on(self, stub_server, data, says):
+        stub_server.response = {"type": "response", "data": data}
+        tool = await FoxMCPTools(stub_server).mcp.get_tool("content_type")
+
+        answer = await tool.fn(tab_id=4, text="FR", selector="#t", commit=True)
+        assert answer == f'Typed into [r1] select "FR"{says}'
 
 
 class TestRealInputOnly:

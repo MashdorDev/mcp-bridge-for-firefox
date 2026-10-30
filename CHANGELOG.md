@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`content_type(commit=True)` leaves the field after typing.** Chip and token inputs, such as Google Analytics' "Enter email addresses", turn the text into an entry only when focus moves away, and Enter submitted the form first, so Add answered "You must enter at least one email address". The field gets `blur`, `focusout` and `change` as a click elsewhere would give it, also in a Firefox window that is not in front, where `blur()` alone fires nothing. The result says whether the field emptied itself, which is how such inputs show they took the entry.
+
 ### Fixed
 - **The agent overlay keeps its look on pages with a strict style CSP.** Its styles were a `<style>` element and style attributes, which pages such as Teams block, so the "Working on this page" label showed as plain serif text in the top left and the cursor was drawn black and huge (a third of the window). The styles now come from a constructed stylesheet, which the page's CSP does not cover.
 - **Real input that shows no sign of reaching the page says so.** Window input could report a click, key press or typed text as done while the page got nothing (a Firefox window behind another one, or one Firefox does not deliver to), and typing then failed with a misleading "Only part of the text arrived". The add-on now watches for the real key and pointer events the page receives. When there were none, `content_click` and `content_press_key` add a warning to their result, and `content_type` (when the text is not in the field) says the keys most likely did not arrive. Nothing is done again automatically: the input may have landed where the page cannot see it, such as an iframe, the browser itself or another window.

@@ -2820,7 +2820,8 @@ class FoxMCPTools:
             selector: Optional[str] = None,
             clear: bool = True,
             submit: bool = False,
-            field: Optional[str] = None
+            field: Optional[str] = None,
+            commit: bool = False
         ) -> str:
             """Type text into an input, textarea or editable element
 
@@ -2835,7 +2836,22 @@ class FoxMCPTools:
                 submit: Press Enter afterwards (default: False)
                 field: The field's label, aria-label or placeholder ("Search",
                     "Leave a reply"), instead of a ref or selector
+                commit: Leave the field afterwards, as a click elsewhere would
+                    (blur and change). Chip and token inputs, such as a list
+                    of email addresses, often accept an entry only then, and
+                    Enter may submit the form first (default: False)
             """
+            def typed(into, data, how=""):
+                committed = ""
+                if commit and not data.get("committed"):
+                    committed = ", but did not leave it: the add-on is too old for commit, update it"
+                elif commit and data.get("emptied") is None:
+                    committed = ", and left it"
+                elif commit:
+                    committed = (", and left it; the field emptied, so it likely took the text as an entry"
+                                 if data["emptied"] else ", and left it; the text is still in the field")
+                return f"Typed into {into}{how}{committed}"
+
             async def type_for_real(bidi, context, element):
                 await bidi.click(context, element)
                 if clear:
@@ -2852,24 +2868,33 @@ class FoxMCPTools:
                 found = {"tabId": tab_id, "ref": None, "selector": prep.get("selector")}
                 checked, error = await page_request({
                     "action": "content.check_typed",
-                    "data": {**found, "text": text, "clear": clear, "token": prep["token"]}
+                    "data": {**found, "text": text, "clear": clear, "commit": commit, "submit": submit,
+                             "token": prep["token"]}
                 })
                 if error:
                     return f"Failed to type: {error}"
-                if submit:
-                    await real_input(tab_id, None, prep.get("selector"), "key",
-                                     lambda bidi, context, element: bidi.press(context, "Enter"))
-                return f"Typed into {checked.get('typed')} (real input)"
+                how = " (real input)"
+                if checked.get("enterMissed"):
+                    how += f"; Enter was not pressed: {checked['enterMissed']}"
+                elif submit and not checked.get("submitted"):
+                    pressed = await real_input(tab_id, None, prep.get("selector"), "key",
+                                               lambda bidi, context, element: bidi.press(context, "Enter"))
+                    if pressed is None:
+                        how += "; Enter was not pressed: real input was not available for it"
+                    elif pressed is not SCRIPTED_ONLY and pressed[1]:
+                        how += f"; Enter was not pressed: {pressed[1]}"
+                return typed(checked.get('typed'), checked, how)
             if real is not SCRIPTED_ONLY and (refusal := scripted_refusal("type")):
                 return refusal
             data, error = await page_request({
                 "action": "content.type",
                 "data": {**target(tab_id, ref, selector, field),
-                         "text": text, "clear": clear, "submit": submit}
+                         "text": text, "clear": clear, "submit": submit, "commit": commit}
             })
             if error:
                 return f"Failed to type: {error}"
-            return f"Typed into {data.get('typed')}"
+            missed = f"; Enter was not pressed: {data['enterMissed']}" if data.get("enterMissed") else ""
+            return typed(data.get('typed'), data, missed)
 
         # Press Key Tool
         @self._tool()

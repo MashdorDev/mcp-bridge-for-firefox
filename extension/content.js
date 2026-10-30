@@ -421,6 +421,8 @@ function clickElement(el, clicks = 1) {
 // input event per piece, as they would from a keyboard.
 const TYPE_ANIMATION_MS = 1000;
 const TYPE_STEP_MS = 25;
+// How long commitField gives a page to turn typed text into a chip
+const COMMIT_SETTLE_MS = 300;
 
 // Focusing an editable element does not put the caret inside it, and
 // insertText with no caret in the element is refused.
@@ -487,6 +489,7 @@ function chooseOption(select, text, clear) {
 
 async function typeInto(el, text, clear) {
   if (el instanceof HTMLSelectElement) return chooseOption(el, text, clear);
+  changeSent.delete(el);
   // Found before typing: replacing the editor's contents can remove el itself
   const host = el.isContentEditable ? editingHost(el) : el;
   el.scrollIntoView({ block: 'center' });
@@ -558,6 +561,7 @@ async function typeInto(el, text, clear) {
   setter.call(el, clear ? text : el.value + text);
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
+  changeSent.add(el);
   showTypingField(el);
   return el;
 }
@@ -578,6 +582,59 @@ function checkTyped(el, text, cleared) {
   if (cleared && now !== wanted) {
     throw new Error(`The field was not cleared: it holds ${now.length} characters, the text was ${wanted.length}`);
   }
+}
+
+// Submits the form of a field the page replaced on blur, which a key press can
+// no longer reach. Returns why it could not, for the tool to say so.
+function submitReplacedField(form) {
+  if (!form || !form.isConnected) return 'the page replaced the field and there is no form left to submit';
+  if (!form.checkValidity()) return 'the form has a field that is not valid yet';
+  form.requestSubmit();
+  return null;
+}
+
+// The field typed into, or a note that the page replaced it, whose ref would
+// lead nowhere
+const typedField = el => el.isConnected ? describe(el) : 'a field the page has since replaced';
+
+// Fields typeInto already sent a change to, which commitField must not repeat
+const changeSent = new WeakSet();
+
+// Leave a field the way a person clicking elsewhere does. Chip and token inputs
+// (Google Analytics' "Enter email addresses") turn the text into an entry only
+// when focus moves away; Enter submitted the form first. Says whether the field
+// emptied itself or was replaced, which is how such inputs show they took the
+// entry, or null for a <select>, which holds a choice rather than text. With
+// refocus, focus goes back afterwards, so a real Enter that follows reaches the
+// field as it would after a person clicked back into it.
+async function commitField(el, refocus) {
+  const field = el.isContentEditable ? editingHost(el) : el;
+  let changed = false, blurred = false;
+  const noteChange = () => { changed = true; };
+  const noteBlur = () => { blurred = true; };
+  field.addEventListener('change', noteChange, { once: true });
+  field.addEventListener('blur', noteBlur, { once: true });
+  field.blur();
+  // In a window that is not in front, which is how agents mostly drive
+  // Firefox, blur() fires nothing. Firefox still fires its own change while
+  // it handles the blur dispatched here, so noteChange stays on until after.
+  if (!blurred) {
+    field.dispatchEvent(new FocusEvent('blur'));
+    field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+  }
+  field.removeEventListener('change', noteChange);
+  field.removeEventListener('blur', noteBlur);
+  // chooseOption already sent a <select> its change
+  if (field instanceof HTMLSelectElement) return null;
+  // Firefox fires change on blur only for edits it counts as the user's
+  if (!changed && !changeSent.has(field) && (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) {
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  // Frameworks turn the text into a chip on their next render, not during blur
+  await new Promise(resolve => setTimeout(resolve, COMMIT_SETTLE_MS));
+  const emptied = !field.isConnected || !(field.isContentEditable ? field.innerText : field.value || '').trim();
+  if (refocus && field.isConnected) field.focus();
+  return emptied;
 }
 
 // Inputs a typed character does not go into. Date and time inputs take keys
@@ -1395,9 +1452,16 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
         showOverlay('typing');
         moveCursorTo(el, true)
           .then(() => typeInto(el, data.text, data.clear !== false))
-          .then(field => {
-            if (data.submit) pressKey(field, 'Enter');
-            sendResponse({ typed: describe(field) });
+          .then(async field => {
+            const form = field.form;
+            const emptied = data.commit ? await commitField(field, data.submit) : undefined;
+            let enterMissed = null;
+            if (data.submit) {
+              // A chip input that replaced the field leaves this one detached
+              if (field.isConnected) pressKey(field, 'Enter');
+              else enterMissed = submitReplacedField(form);
+            }
+            sendResponse({ typed: typedField(field), committed: Boolean(data.commit), emptied, enterMissed });
           })
           .catch(error => sendResponse({ error: error.message }));
         break;
@@ -1525,7 +1589,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       case 'checkTypedText': {
         const el = findTarget(data);
-        realInputArrived(data.token).then(arrived => {
+        realInputArrived(data.token).then(async arrived => {
           try {
             checkTyped(el, data.text, data.clear);
           } catch (error) {
@@ -1534,7 +1598,13 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
               'a field that hands focus to an editor in a frame gets keys this page cannot see') : error;
           }
           showTypingField(el);
-          sendResponse({ typed: describe(el) });
+          const form = el.form;
+          const emptied = data.commit ? await commitField(el, data.submit) : undefined;
+          // A chip input that replaced the field leaves nothing for a real
+          // Enter to reach, so the form is submitted from here instead
+          const submitted = Boolean(data.submit && !el.isConnected);
+          const enterMissed = submitted ? submitReplacedField(form) : null;
+          sendResponse({ typed: typedField(el), committed: Boolean(data.commit), emptied, submitted, enterMissed });
         }).catch(error => sendResponse({ error: error.message }));
         break;
       }
