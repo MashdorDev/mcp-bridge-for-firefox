@@ -9,13 +9,14 @@ name: Release
 # dependency is web-ext, which only the AMO job installs, and that job is the
 # only one that touches a credential.
 #
-# Two ways in:
-#   - push a tag v1.2.0            builds, publishes, submits to AMO
-#   - run it by hand with a version  verifies and builds, publishes nothing
+# Run by hand with a version, it verifies and builds and publishes nothing.
+#
+# It no longer runs on a pushed tag. Releases are signed unlisted and attached
+# by hand, and a tag from `gh release create` was starting this workflow, whose
+# AMO job submits to the public listing. Bring the tag trigger back when the
+# add-on goes on the listing.
 
 on:
-  push:
-    tags: ['v[0-9]+.[0-9]+.[0-9]+']
   workflow_dispatch:
     inputs:
       version:
