@@ -79,6 +79,11 @@ class WindowInputUnavailable(Exception):
     """Not on Windows, or the tab's Firefox window was not found"""
 
 
+class WindowNotShowing(WindowInputUnavailable):
+    """The tab is not in its window yet: Firefox updates the title and the
+    tab's visibility a moment after a tab is activated, so this can pass"""
+
+
 def clipboard_sequence() -> int:
     """Windows' count of clipboard changes: it goes up whenever anything is
     copied, by anyone, and says nothing about what was copied"""
@@ -147,7 +152,7 @@ class WindowInput:
         # tab is behind another) produce no events, while the tool would still
         # report a real click; scripted events are the honest fallback
         if screen.get('hidden'):
-            raise WindowInputUnavailable('The tab is not showing (its window is minimised or covered)')
+            raise WindowNotShowing('the tab is not showing (its window is minimised or covered)')
         self.origin = (screen['x'], screen['y'])
         self.dpr = screen['dpr'] or 1
         self.title = screen.get('title') or ''
@@ -169,7 +174,7 @@ class WindowInput:
             windows = [hwnd for hwnd in windows if window_title(hwnd).startswith(self.title)]
         hwnd = (windows or [0])[0]
         if not hwnd:
-            raise WindowInputUnavailable("The tab's Firefox window was not found (minimised?)")
+            raise WindowNotShowing("the tab's Firefox window was not found (minimised?)")
         self.hwnd = hwnd
         self.thread = user32.GetWindowThreadProcessId(hwnd, None)
         return self
