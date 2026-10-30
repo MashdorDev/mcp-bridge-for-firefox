@@ -151,104 +151,54 @@ async def test_another_firefox_window_at_the_same_spot_is_never_used(monkeypatch
             pass
 
 
-HIDDEN = {'screen': {'x': 100, 'y': 50, 'dpr': 2, 'title': 'Page', 'hidden': True}, 'point': {'x': 10, 'y': 20}}
+@pytest.mark.parametrize('window, page, shows', [
+    ('Inbox \u2014 Mozilla Firefox', 'Inbox', True),
+    ('Inbox - Mozilla Firefox', 'Inbox', True),
+    ('Inbox', 'Inbox', True),
+    ('Inbox - Draft to boss \u2014 Mozilla Firefox', 'Inbox', False),
+    ('Home Depot \u2014 Mozilla Firefox', 'Home', False),
+    ('Anything', '', False),
+])
+def test_a_window_title_must_be_the_page_and_the_browser_name_only(window, page, shows):
+    assert win_input.shows_page(window, page) is shows
 
 
-@pytest.mark.asyncio
-async def test_a_covered_window_is_found_by_its_title(monkeypatch):
-    fake_windows(monkeypatch, foreground=99)
-    monkeypatch.setattr(win_input, 'window_contains', lambda hwnd, x, y: False)
-    monkeypatch.setattr(win_input.user32, 'IsIconic', lambda hwnd: 0, raising=False)
-    async with WindowInput(HIDDEN) as window:
-        assert window.hwnd == 7
+def hidden_windows(monkeypatch, windows, iconic=()):
+    """windows maps hwnd to (title, contains the page's position)"""
+    monkeypatch.setattr(win_input, 'firefox_windows', lambda minimised=False: [
+        h for h in windows if minimised or h not in iconic])
+    monkeypatch.setattr(win_input, 'window_title', lambda h: windows[h][0])
+    monkeypatch.setattr(win_input, 'window_contains', lambda h, x, y: windows[h][1])
+    monkeypatch.setattr(win_input.user32, 'IsIconic', lambda h: h in iconic, raising=False)
 
 
-@pytest.mark.asyncio
-async def test_two_covered_windows_with_the_title_are_refused(monkeypatch):
-    fake_windows(monkeypatch, foreground=99)
-    monkeypatch.setattr(win_input, 'firefox_windows', lambda minimised=False: [7, 8])
+def test_a_covered_window_needs_position_and_title_to_agree(monkeypatch):
+    hidden_windows(monkeypatch, {7: ('Page \u2014 Mozilla Firefox', True), 8: ('Page \u2014 Mozilla Firefox', False)})
+    assert win_input.hidden_window('Page', 0, 0) == 7
+
+
+def test_the_window_in_use_elsewhere_with_this_title_is_never_taken(monkeypatch):
+    hidden_windows(monkeypatch, {8: ('Page \u2014 Mozilla Firefox', False)})
     with pytest.raises(WindowNotShowing):
-        async with WindowInput(HIDDEN):
-            pass
+        win_input.hidden_window('Page', 0, 0)
 
 
-@pytest.mark.asyncio
-async def test_a_minimised_window_takes_keys_but_refuses_a_click(monkeypatch):
-    fake_windows(monkeypatch, foreground=99)
+def test_one_minimised_window_with_the_title_is_taken(monkeypatch):
+    hidden_windows(monkeypatch, {7: ('Page \u2014 Mozilla Firefox', False)}, iconic=(7,))
+    assert win_input.hidden_window('Page', 0, 0) == 7
+
+
+def test_two_minimised_windows_with_the_title_are_refused(monkeypatch):
+    hidden_windows(monkeypatch, {7: ('Page \u2014 Mozilla Firefox', False), 8: ('Page \u2014 Mozilla Firefox', False)}, iconic=(7, 8))
+    with pytest.raises(WindowNotShowing):
+        win_input.hidden_window('Page', 0, 0)
+
+
+def test_a_minimised_window_refuses_a_click(monkeypatch):
     monkeypatch.setattr(win_input.user32, 'IsIconic', lambda hwnd: 1, raising=False)
-    async with WindowInput(HIDDEN) as window:
-        with pytest.raises(WindowInputUnavailable):
-            window.client_point(10, 20)
-
-
-def fake_windows(monkeypatch, foreground, same_firefox=False):
-    posted = []
-    monkeypatch.setattr(win_input, 'firefox_windows', lambda minimised=False: [7])
-    monkeypatch.setattr(win_input, 'window_contains', lambda hwnd, x, y: True)
-    monkeypatch.setattr(win_input, 'window_title', lambda hwnd: 'Page - Firefox')
-    monkeypatch.setattr(win_input, 'ACTIVATE_SETTLE_S', 0)
-    monkeypatch.setattr(win_input, 'same_firefox', lambda one, other: same_firefox or one == other)
-    monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: foreground, raising=False)
-    monkeypatch.setattr(win_input.user32, 'GetWindowThreadProcessId', lambda hwnd, _: 1, raising=False)
-    monkeypatch.setattr(win_input.user32, 'IsIconic', lambda hwnd: 0, raising=False)
-    monkeypatch.setattr(win_input.user32, 'PostMessageW', lambda h, m, w, l: posted.append((h, m, w)) or 1, raising=False)
-    return posted
-
-
-ACTIVE, INACTIVE = (7, win_input.WM_ACTIVATE, win_input.WA_ACTIVE), (7, win_input.WM_ACTIVATE, win_input.WA_INACTIVE)
-
-
-@pytest.mark.asyncio
-async def test_keys_make_a_background_window_active_and_it_steps_down_later(monkeypatch):
-    posted = fake_windows(monkeypatch, foreground=99)
-    async with WindowInput(PREP) as window:
-        await window.make_active()
-        await window.make_active()
-        assert posted == [ACTIVE]
-    # The timer itself is asyncio: what matters is what it does when it fires
-    win_input.activated[7].cancel()
-    win_input.step_down(7)
-    assert posted == [ACTIVE, INACTIVE]
-    assert not win_input.activated
-
-
-@pytest.mark.asyncio
-async def test_an_action_without_keys_leaves_the_window_as_it_was(monkeypatch):
-    posted = fake_windows(monkeypatch, foreground=99)
-    async with WindowInput(PREP):
-        pass
-    assert posted == []
-    assert not win_input.activated
-
-
-@pytest.mark.asyncio
-async def test_activation_is_posted_again_even_with_a_step_down_pending(monkeypatch):
-    posted = fake_windows(monkeypatch, foreground=99)
-    async with WindowInput(PREP) as window:
-        await window.make_active()
-    async with WindowInput(PREP) as window:
-        await window.make_active()
-    assert posted == [ACTIVE, ACTIVE]
-    win_input.activated[7].cancel()
-    win_input.activated.clear()
-
-
-@pytest.mark.asyncio
-async def test_the_window_the_person_is_in_is_left_alone(monkeypatch):
-    posted = fake_windows(monkeypatch, foreground=7)
-    async with WindowInput(PREP) as window:
-        await window.make_active()
-    assert posted == []
-    assert not win_input.activated
-
-
-@pytest.mark.asyncio
-async def test_another_window_of_the_same_firefox_is_not_lowered(monkeypatch):
-    posted = fake_windows(monkeypatch, foreground=99, same_firefox=True)
-    async with WindowInput(PREP) as window:
-        with pytest.raises(WindowInputUnavailable):
-            await window.make_active()
-    assert posted == []
+    window = WindowInput(PREP)
+    with pytest.raises(WindowInputUnavailable):
+        window.client_point(10, 20)
 
 
 def test_no_screen_position_is_not_worth_retrying():
