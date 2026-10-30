@@ -156,6 +156,8 @@ class BrowserConnection:
     websocket: Any
     name: str
     version: str = ''
+    # Set by the hello; until then name and key are placeholders
+    said_hello: bool = False
     # 'firefox', or 'thunderbird' for the Thunderbird add-on, which answers a
     # different set of actions
     app: str = 'firefox'
@@ -249,6 +251,9 @@ class FoxMCPServer:
         # ids and monitors vanished between calls.
         self.browsers: Dict[str, BrowserConnection] = {}
         self.active_browser: Optional[str] = None
+        # When the WebSocket server started listening (time.monotonic()), so
+        # tools can tell "no browser yet" from "no browser at all"
+        self.listening_since: Optional[float] = None
         # The active browser stays active while it is away, so its tab ids
         # never start meaning tabs in another profile: when Lost Tribe restarted
         # for an add-on update, tools moved to the main profile and a "tab 1"
@@ -419,6 +424,7 @@ class FoxMCPServer:
         if browser is None:
             return
         browser.version = str(data.get('version') or '')
+        browser.said_hello = True
         browser.real_input = bool(data.get('real_input'))
         browser.real_input_missed_at = 0.0  # the person may just have set it up
         try:
@@ -1311,6 +1317,7 @@ class FoxMCPServer:
             )
             raise
 
+        self.listening_since = time.monotonic()
         logger.info("FoxMCP WebSocket server is running...")
 
         if self.start_mcp and not self.use_stdio:

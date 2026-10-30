@@ -126,6 +126,10 @@ let retryAttempts = 0;
 // client came back. One localhost connection attempt every 30s costs nothing.
 const FAST_RETRIES = 50;
 const SLOW_RETRY_INTERVAL = 30000;
+// The console gets a line when the connection comes up or drops, not one per
+// failed attempt: with the server down, every attempt used to log four lines,
+// and the add-on's console showed nothing else.
+let loggedDown = false;
 
 // Who this browser is, sent to the server on every connection so it can tell
 // several Firefox profiles apart. Kept in storage.local, never storage.sync:
@@ -208,13 +212,16 @@ function connectToMCPServer() {
 
     // Compute WebSocket URL dynamically using current config
     const WS_URL = `ws://${CONFIG.hostname}:${CONFIG.port}`;
-    console.log(`🔗 Connecting to ${WS_URL} (attempt ${retryAttempts + 1})`);
+    console.debug(`Connecting to ${WS_URL} (attempt ${retryAttempts + 1})`);
 
     const socket = new WebSocket(WS_URL);
     websocket = socket;
+    let opened = false;
 
     socket.onopen = () => {
-      console.log('Connected to MCP server');
+      opened = true;
+      loggedDown = false;
+      console.log(`Connected to the MCP server on port ${CONFIG.port}`);
       isConnected = true;
       updateBadge();
       retryAttempts = 0; // Reset retry counter on successful connection
@@ -233,7 +240,7 @@ function connectToMCPServer() {
       await handleMessage(JSON.parse(event.data), socket);
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       // Reconnect only if this socket is still the live one.
       //
       // close() fires this handler for a deliberate disconnect as well, and
@@ -246,7 +253,12 @@ function connectToMCPServer() {
         return;
       }
 
-      console.log('Disconnected from MCP server');
+      if (opened) {
+        console.log(`Lost the MCP server on port ${CONFIG.port} (close code ${event.code}); reconnecting`);
+      } else if (!loggedDown) {
+        console.log(`No MCP server on port ${CONFIG.port} yet; retrying quietly until one starts`);
+      }
+      loggedDown = true;
       isConnected = false;
       updateBadge();
       clearAllMonitors('the connection to the server dropped');
@@ -254,9 +266,8 @@ function connectToMCPServer() {
       scheduleReconnect();
     };
 
-    socket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
+    // The error event carries nothing readable, and onclose follows it
+    socket.onerror = () => {};
   } catch (error) {
     console.error('Failed to connect to MCP server:', error);
     scheduleReconnect();
@@ -275,8 +286,17 @@ function connectToMCPServer() {
 // all of them at once queued the main connection behind them and it never got
 // through.
 const EXTRA_SERVER_SCAN_MS = 15000;
+// A connection to one of them dropping is most often its session restarting
+// the server (/mcp), so for a minute after that its port alone is tried every
+// 3 s. With the full scan every 15 s, and each empty port taking seconds to
+// fail, browsers took up to 30 s to come back to a restarted server.
+const EXTRA_SERVER_RESCAN_MS = 3000;
+const EXTRA_SERVER_RESCAN_FOR_MS = 60000;
+const EXTRA_SERVER_HELD_MS = 10000;
 const extraSockets = new Map(); // port -> socket
+const extraServersLost = new Map(); // port -> when its open connection first dropped
 let extraScanRunning = false;
+let lastExtraScan = 0;
 
 function connectExtraServer(port) {
   return new Promise(settled => {
@@ -288,14 +308,26 @@ function connectExtraServer(port) {
       return;
     }
     extraSockets.set(port, socket);
+    let opened = false;
+    let openedAt = 0;
     socket.onopen = () => {
+      opened = true;
+      openedAt = Date.now();
       console.log(`Connected to an additional MCP server on port ${port}`);
       updateBadge();
       sendHello(socket).catch(error => console.error('Could not send hello:', error));
       settled();
     };
     socket.onmessage = async (event) => handleMessage(JSON.parse(event.data), socket);
-    socket.onclose = () => {
+    socket.onclose = (event) => {
+      if (opened) {
+        // The first drop starts the minute: a server that accepts and drops
+        // again would otherwise keep it going, probed every 3 s for good. One
+        // that held for a while before dropping is a new restart, with its own.
+        const held = Date.now() - openedAt > EXTRA_SERVER_HELD_MS;
+        if (held || !extraServersLost.has(port)) extraServersLost.set(port, Date.now());
+        console.log(`Lost the additional MCP server on port ${port} (close code ${event.code})`);
+      }
       if (extraSockets.get(port) === socket) extraSockets.delete(port);
       updateBadge();
       releaseAgentTabsOf(socket);
@@ -305,13 +337,12 @@ function connectExtraServer(port) {
   });
 }
 
-async function scanExtraServers() {
+async function scanExtraServers(ports) {
   if (extraScanRunning) return;
   extraScanRunning = true;
   try {
-    for (let i = 1; i <= settings.extraServerPorts; i++) {
+    for (const port of ports) {
       if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
-      const port = CONFIG.port + i;
       const existing = extraSockets.get(port);
       if (!existing || existing.readyState === WebSocket.CLOSED) await connectExtraServer(port);
     }
@@ -320,7 +351,19 @@ async function scanExtraServers() {
   }
 }
 
-setInterval(scanExtraServers, EXTRA_SERVER_SCAN_MS);
+setInterval(() => {
+  const now = Date.now();
+  if (now - lastExtraScan >= EXTRA_SERVER_SCAN_MS && !extraScanRunning) {
+    lastExtraScan = now;
+    scanExtraServers(Array.from({ length: settings.extraServerPorts }, (_, i) => CONFIG.port + 1 + i));
+    return;
+  }
+  for (const [port, lostAt] of extraServersLost) {
+    if (now - lostAt >= EXTRA_SERVER_RESCAN_FOR_MS) extraServersLost.delete(port);
+  }
+  // The settings may have changed since the drop
+  if (extraServersLost.size) scanExtraServers([...extraServersLost.keys()].filter(port => port > CONFIG.port && port <= CONFIG.port + settings.extraServerPorts));
+}, EXTRA_SERVER_RESCAN_MS);
 
 function scheduleReconnect() {
   retryAttempts++;
@@ -334,7 +377,7 @@ function scheduleReconnect() {
   const delay = retryAttempts > FAST_RETRIES
     ? Math.max(CONFIG.retryInterval, SLOW_RETRY_INTERVAL)
     : CONFIG.retryInterval;
-  console.log(`Scheduling reconnection attempt ${retryAttempts} in ${delay}ms`);
+  console.debug(`Scheduling reconnection attempt ${retryAttempts} in ${delay}ms`);
   setTimeout(connectToMCPServer, delay);
 }
 
