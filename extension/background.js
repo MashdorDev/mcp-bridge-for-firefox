@@ -1108,6 +1108,44 @@ const AGENT_ACTIVITY = {
 };
 const THINKING_LABEL = 'Thinking about the next step';
 
+// A read right after navigating got the page before it, so the navigation tools
+// answer once the new page has loaded. A jump within the page never starts
+// loading, and a slow page must not hold the tool for long, so both are bounded.
+const NAVIGATION_START_MS = 2000;
+const NAVIGATION_LOAD_MS = 15000;
+
+async function navigated(tabId, go) {
+  let onUpdated, onRequest, timer;
+  const finished = new Promise(resolve => {
+    let loading = false;
+    timer = setTimeout(() => resolve(true), NAVIGATION_START_MS);
+    const started = () => {
+      if (loading) return;
+      loading = true;
+      clearTimeout(timer);
+      timer = setTimeout(() => resolve(false), NAVIGATION_LOAD_MS);
+    };
+    // The tab's status only turns to loading once the response comes in, which
+    // for a slow server is after the start window; the request is at once.
+    onRequest = started;
+    onUpdated = (id, change) => {
+      if (id !== tabId) return;
+      if (change.status === 'loading') started();
+      else if (change.status === 'complete' && loading) resolve(true);
+    };
+    browser.webRequest.onBeforeRequest.addListener(onRequest, { urls: ['<all_urls>'], types: ['main_frame'], tabId });
+    browser.tabs.onUpdated.addListener(onUpdated);
+  });
+  try {
+    await go();
+    return await finished;
+  } finally {
+    clearTimeout(timer);
+    browser.webRequest.onBeforeRequest.removeListener(onRequest);
+    browser.tabs.onUpdated.removeListener(onUpdated);
+  }
+}
+
 function sendAgentState(tabId) {
   const entry = agentTabs.get(tabId);
   if (!entry) return;
@@ -1445,23 +1483,23 @@ async function handleNavigationAction(id, action, data) {
   try {
     switch (action) {
       case 'navigation.go_to_url':
-        await browser.tabs.update(data.tabId, { url: data.url });
-        sendResponse(id, action, { success: true });
+        sendResponse(id, action, { success: true,
+          loaded: await navigated(data.tabId, () => browser.tabs.update(data.tabId, { url: data.url })) });
         break;
 
       case 'navigation.back':
-        await browser.tabs.goBack(data.tabId);
-        sendResponse(id, action, { success: true });
+        sendResponse(id, action, { success: true,
+          loaded: await navigated(data.tabId, () => browser.tabs.goBack(data.tabId)) });
         break;
 
       case 'navigation.forward':
-        await browser.tabs.goForward(data.tabId);
-        sendResponse(id, action, { success: true });
+        sendResponse(id, action, { success: true,
+          loaded: await navigated(data.tabId, () => browser.tabs.goForward(data.tabId)) });
         break;
 
       case 'navigation.reload':
-        await browser.tabs.reload(data.tabId, { bypassCache: data.bypassCache || false });
-        sendResponse(id, action, { success: true });
+        sendResponse(id, action, { success: true,
+          loaded: await navigated(data.tabId, () => browser.tabs.reload(data.tabId, { bypassCache: data.bypassCache || false })) });
         break;
 
       default:
