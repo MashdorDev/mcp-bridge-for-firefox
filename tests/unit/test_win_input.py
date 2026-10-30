@@ -141,14 +141,9 @@ def test_without_screen_details_the_window_cannot_be_used():
         WindowInput({'target': 'the page'})
 
 
-def test_a_tab_that_is_not_showing_gets_no_window_messages():
-    with pytest.raises(WindowInputUnavailable):
-        WindowInput({'screen': {**PREP['screen'], 'hidden': True}, 'point': PREP['point']})
-
-
 @pytest.mark.asyncio
 async def test_another_firefox_window_at_the_same_spot_is_never_used(monkeypatch):
-    monkeypatch.setattr(win_input, 'firefox_windows', lambda: [11, 22])
+    monkeypatch.setattr(win_input, 'firefox_windows', lambda minimised=False: [11, 22])
     monkeypatch.setattr(win_input, 'window_contains', lambda hwnd, x, y: True)
     monkeypatch.setattr(win_input, 'window_title', lambda hwnd: {11: 'Mail - Mozilla Firefox', 22: 'Notes'}[hwnd])
     with pytest.raises(WindowInputUnavailable):
@@ -156,21 +151,46 @@ async def test_another_firefox_window_at_the_same_spot_is_never_used(monkeypatch
             pass
 
 
-def test_a_hidden_tab_can_still_come_up():
-    """Right after a tab is activated it can still read as hidden: the tool retries this one"""
+HIDDEN = {'screen': {'x': 100, 'y': 50, 'dpr': 2, 'title': 'Page', 'hidden': True}, 'point': {'x': 10, 'y': 20}}
+
+
+@pytest.mark.asyncio
+async def test_a_covered_window_is_found_by_its_title(monkeypatch):
+    fake_windows(monkeypatch, foreground=99)
+    monkeypatch.setattr(win_input, 'window_contains', lambda hwnd, x, y: False)
+    monkeypatch.setattr(win_input.user32, 'IsIconic', lambda hwnd: 0, raising=False)
+    async with WindowInput(HIDDEN) as window:
+        assert window.hwnd == 7
+
+
+@pytest.mark.asyncio
+async def test_two_covered_windows_with_the_title_are_refused(monkeypatch):
+    fake_windows(monkeypatch, foreground=99)
+    monkeypatch.setattr(win_input, 'firefox_windows', lambda minimised=False: [7, 8])
     with pytest.raises(WindowNotShowing):
-        WindowInput({'screen': {'x': 0, 'y': 0, 'dpr': 1, 'title': 'Page', 'hidden': True}})
+        async with WindowInput(HIDDEN):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_a_minimised_window_takes_keys_but_refuses_a_click(monkeypatch):
+    fake_windows(monkeypatch, foreground=99)
+    monkeypatch.setattr(win_input.user32, 'IsIconic', lambda hwnd: 1, raising=False)
+    async with WindowInput(HIDDEN) as window:
+        with pytest.raises(WindowInputUnavailable):
+            window.client_point(10, 20)
 
 
 def fake_windows(monkeypatch, foreground, same_firefox=False):
     posted = []
-    monkeypatch.setattr(win_input, 'firefox_windows', lambda: [7])
+    monkeypatch.setattr(win_input, 'firefox_windows', lambda minimised=False: [7])
     monkeypatch.setattr(win_input, 'window_contains', lambda hwnd, x, y: True)
     monkeypatch.setattr(win_input, 'window_title', lambda hwnd: 'Page - Firefox')
     monkeypatch.setattr(win_input, 'ACTIVATE_SETTLE_S', 0)
     monkeypatch.setattr(win_input, 'same_firefox', lambda one, other: same_firefox or one == other)
     monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: foreground, raising=False)
     monkeypatch.setattr(win_input.user32, 'GetWindowThreadProcessId', lambda hwnd, _: 1, raising=False)
+    monkeypatch.setattr(win_input.user32, 'IsIconic', lambda hwnd: 0, raising=False)
     monkeypatch.setattr(win_input.user32, 'PostMessageW', lambda h, m, w, l: posted.append((h, m, w)) or 1, raising=False)
     return posted
 

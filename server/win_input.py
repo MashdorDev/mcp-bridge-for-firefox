@@ -96,15 +96,15 @@ def clipboard_sequence() -> int:
     return user32.GetClipboardSequenceNumber()
 
 
-def firefox_windows() -> List[int]:
-    """Visible, not minimised Firefox windows, front to back"""
+def firefox_windows(minimised: bool = False) -> List[int]:
+    """Visible Firefox windows, front to back, by default without minimised ones"""
     found = []
 
     @EnumWindowsProc
     def visit(hwnd, _):
         name = ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(hwnd, name, 64)
-        if name.value == 'MozillaWindowClass' and user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
+        if name.value == 'MozillaWindowClass' and user32.IsWindowVisible(hwnd) and (minimised or not user32.IsIconic(hwnd)):
             found.append(hwnd)
         return True
 
@@ -191,11 +191,10 @@ class WindowInput:
         screen = prep.get('screen')
         if not screen:
             raise WindowInputUnavailable('The page did not say where it is on screen')
-        # Messages to a window that does not show the tab (minimised, or the
-        # tab is behind another) produce no events, while the tool would still
-        # report a real click; scripted events are the honest fallback
-        if screen.get('hidden'):
-            raise WindowNotShowing('the tab is not showing (its window is minimised or covered)')
+        # A covered or minimised window reads as hidden and still takes input.
+        # What it can't do is say where it is on screen, or be told from another
+        # window by position, so it is found by its title alone.
+        self.hidden = bool(screen.get('hidden'))
         self.origin = (screen['x'], screen['y'])
         self.dpr = screen['dpr'] or 1
         self.title = screen.get('title') or ''
@@ -205,10 +204,14 @@ class WindowInput:
         self.buttons = 0
         self.attached = False
         self.made_active = False
+        self.minimised = False
 
     async def __aenter__(self):
         x, y = self.screen_point(0, 0)
-        windows = [hwnd for hwnd in firefox_windows() if window_contains(hwnd, x, y)]
+        windows = [hwnd for hwnd in firefox_windows(self.hidden) if self.hidden or window_contains(hwnd, x, y)]
+        # With no position to go on, two windows with this title could be anyone's
+        if self.hidden and (not self.title or len([h for h in windows if window_title(h).startswith(self.title)]) != 1):
+            raise WindowNotShowing("the tab's Firefox window could not be told apart by its title")
         # Firefox names its window after the page showing in it, which picks
         # the right one when two Firefox windows overlap there
         # Only a window showing this page's title: another Firefox window at
@@ -221,6 +224,7 @@ class WindowInput:
             raise WindowNotShowing("the tab's Firefox window was not found (minimised?)")
         self.hwnd = hwnd
         self.thread = user32.GetWindowThreadProcessId(hwnd, None)
+        self.minimised = bool(user32.IsIconic(hwnd))
         return self
 
     async def __aexit__(self, *exc):
@@ -253,6 +257,10 @@ class WindowInput:
         return round((self.origin[0] + x) * self.dpr), round((self.origin[1] + y) * self.dpr)
 
     def client_point(self, x: float, y: float):
+        if self.minimised:
+            # Windows moves it off screen, and the restored position is no help
+            # for a maximised one: a click aimed from it could hit the wrong thing
+            raise WindowInputUnavailable('its window is minimised, where a click cannot be aimed (keys still work)')
         sx, sy = self.screen_point(x, y)
         point = wintypes.POINT(sx, sy)
         user32.ScreenToClient(self.hwnd, ctypes.byref(point))
