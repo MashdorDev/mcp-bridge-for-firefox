@@ -2099,7 +2099,12 @@ class FoxMCPTools:
                 paired = ", paired" if getattr(browser, 'paired', False) else ""
                 lines.append(f"- {browser.name}{app}{active}: id {browser.key[:8]}{version}{paired}, "
                              f"connected {minutes} min ago")
-            return f"Connected browsers ({len(browsers)}):\n" + "\n".join(lines) + away
+            # The first browser back ends the wait, and the others may be on a slower retry
+            more = ""
+            if started_s is not None and started_s < RECONNECT_WINDOW_S:
+                more = (f"\nThis server started {int(started_s)} s ago, so other browsers may still be "
+                        "connecting. Call browsers_list again before concluding one is not running.")
+            return f"Connected browsers ({len(browsers)}):\n" + "\n".join(lines) + more + away
 
         @self._tool()
         async def browsers_select(browser: str) -> str:

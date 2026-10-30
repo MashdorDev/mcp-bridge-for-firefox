@@ -292,6 +292,7 @@ const EXTRA_SERVER_SCAN_MS = 15000;
 // fail, browsers took up to 30 s to come back to a restarted server.
 const EXTRA_SERVER_RESCAN_MS = 3000;
 const EXTRA_SERVER_RESCAN_FOR_MS = 60000;
+const EXTRA_SERVER_HELD_MS = 10000;
 const extraSockets = new Map(); // port -> socket
 const extraServersLost = new Map(); // port -> when its open connection first dropped
 let extraScanRunning = false;
@@ -308,8 +309,10 @@ function connectExtraServer(port) {
     }
     extraSockets.set(port, socket);
     let opened = false;
+    let openedAt = 0;
     socket.onopen = () => {
       opened = true;
+      openedAt = Date.now();
       console.log(`Connected to an additional MCP server on port ${port}`);
       updateBadge();
       sendHello(socket).catch(error => console.error('Could not send hello:', error));
@@ -319,8 +322,10 @@ function connectExtraServer(port) {
     socket.onclose = (event) => {
       if (opened) {
         // The first drop starts the minute: a server that accepts and drops
-        // again would otherwise keep it going, probed every 3 s for good
-        if (!extraServersLost.has(port)) extraServersLost.set(port, Date.now());
+        // again would otherwise keep it going, probed every 3 s for good. One
+        // that held for a while before dropping is a new restart, with its own.
+        const held = Date.now() - openedAt > EXTRA_SERVER_HELD_MS;
+        if (held || !extraServersLost.has(port)) extraServersLost.set(port, Date.now());
         console.log(`Lost the additional MCP server on port ${port} (close code ${event.code})`);
       }
       if (extraSockets.get(port) === socket) extraSockets.delete(port);
@@ -356,7 +361,8 @@ setInterval(() => {
   for (const [port, lostAt] of extraServersLost) {
     if (now - lostAt >= EXTRA_SERVER_RESCAN_FOR_MS) extraServersLost.delete(port);
   }
-  if (extraServersLost.size) scanExtraServers([...extraServersLost.keys()]);
+  // The settings may have changed since the drop
+  if (extraServersLost.size) scanExtraServers([...extraServersLost.keys()].filter(port => port > CONFIG.port && port <= CONFIG.port + settings.extraServerPorts));
 }, EXTRA_SERVER_RESCAN_MS);
 
 function scheduleReconnect() {
