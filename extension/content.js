@@ -285,6 +285,75 @@ function findTarget({ ref, selector, targetName }) {
   return all.find(isShown) || all[0];
 }
 
+const DIALOG_BUTTONS = 'button, [role=button], input[type=submit], input[type=button], a[href]';
+const MAX_DIALOG_BUTTONS = 12;
+const DIALOG_TEXT_LENGTH = 300;
+// Of the viewport, for a fixed element with no role to count as a backdrop
+const BACKDROP_COVERS = 0.9;
+const INVISIBLE_OPACITY = 0.05;
+const MAX_OPTIONS_LISTED = 20;
+const FETCH_TIMEOUT_MS = 20000;
+
+function shownOpacity(el) {
+  let opacity = 1;
+  for (let node = el; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+  return opacity;
+}
+
+function openDialogs() {
+  const found = new Set([...document.querySelectorAll(DIALOGS)].filter(isShown));
+  const onTop = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+  // A stuck backdrop often has no role, and only shows by taking every click
+  for (let node = onTop; node && node !== document.body; node = node.parentElement) {
+    const rect = node.getBoundingClientRect();
+    if (getComputedStyle(node).position === 'fixed' && rect.width * rect.height >= BACKDROP_COVERS * innerWidth * innerHeight &&
+        ![...found].some(dialog => dialog.contains(node))) found.add(node);
+  }
+  return [...found].map(el => ({
+    ref: refFor(el),
+    label: el.getAttribute('aria-label') || document.getElementById(el.getAttribute('aria-labelledby') || '')?.innerText ||
+      el.querySelector('h1, h2, h3, [role=heading]')?.innerText || '',
+    invisible: shownOpacity(el) < INVISIBLE_OPACITY,
+    blocking: Boolean(onTop && el.contains(onTop)),
+    text: (el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, DIALOG_TEXT_LENGTH),
+    buttons: [...el.querySelectorAll(DIALOG_BUTTONS)].filter(isShown).slice(0, MAX_DIALOG_BUTTONS)
+      .map(button => ({ ref: refFor(button), name: button.getAttribute('aria-label') || button.innerText || button.value || '' })),
+  }));
+}
+
+const OPTIONS = '[role=option], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [role=treeitem], [data-value], li';
+
+function findOption(data) {
+  const dropdown = findTarget(data);
+  if (dropdown instanceof HTMLSelectElement) return { native: true };
+  const wanted = data.option.replace(/\s+/g, ' ').trim().toLowerCase();
+  // The dropdown's own text is often the option now chosen
+  const options = [...document.querySelectorAll(OPTIONS)]
+    .filter(el => isShown(el) && !el.contains(dropdown) && !dropdown.contains(el));
+  let best = null;
+  for (const el of options) {
+    const have = nameOf(el);
+    const match = have === wanted ? 2 : have.includes(wanted) ? 1 : 0;
+    if (!match) continue;
+    const score = [match, el.matches('li') ? 0 : 1, -el.getElementsByTagName('*').length];
+    if (!best || outranks(score, best.score)) best = { el, score };
+  }
+  return best ? { ref: refFor(best.el) }
+    : { shown: options.slice(0, MAX_OPTIONS_LISTED).map(el => (el.innerText || '').trim().slice(0, 60)).filter(Boolean) };
+}
+
+async function fetchJson({ path }) {
+  const url = new URL(path, location.href);
+  if (url.origin !== location.origin) throw new Error(`${url.origin} is not this page's origin (${location.origin})`);
+  // The page's own fetch: this script's is sent as the add-on's, without the page's origin
+  const options = cloneInto({ method: 'GET', credentials: 'same-origin', headers: { Accept: 'application/json' } }, window);
+  const timer = new Promise((_, reject) => setTimeout(
+    () => reject(new Error(`no answer in ${FETCH_TIMEOUT_MS / 1000} s`)), FETCH_TIMEOUT_MS));
+  const answer = await Promise.race([window.wrappedJSObject.fetch(url.href, options), timer]);
+  if (new URL(answer.url).origin !== location.origin) throw new Error(`it redirected to another origin (${new URL(answer.url).origin})`);
+  return { status: answer.status, url: answer.url, body: await Promise.race([answer.text(), timer]) };
+}
+
 function waitCheck({ selector, text, title, gone }) {
   let seen;
   if (selector) {
@@ -1668,6 +1737,18 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       case 'waitCheck':
         sendResponse(waitCheck(data));
+        break;
+
+      case 'dialogs':
+        sendResponse({ dialogs: openDialogs() });
+        break;
+
+      case 'findOption':
+        sendResponse(findOption(data));
+        break;
+
+      case 'fetchJson':
+        fetchJson(data).then(sendResponse).catch(error => sendResponse({ error: error.message }));
         break;
 
       case 'hover': {

@@ -105,6 +105,9 @@ it, which keeps the tool list shorter.
     instead of an element, for canvases such as a Miro board
 - `content_read(tab_id, ref=None, selector=None, text=None, max_length=20000)` - The text of one element, such as a side panel or a table; a form field gives its value
 - `content_wait_for(tab_id, selector=None, text=None, title=None, gone=False, timeout=10)` - Wait until an element shows, or text is on the page or in its title, or with `gone` until it isn't. Keeps waiting across a navigation
+- `content_dialogs(tab_id)` - The dialogs open on a page with their buttons, including an invisible one or a backdrop taking the page's clicks
+- `content_select_option(tab_id, option, ref=None, selector=None, text=None, timeout=5)` - Choose an option in a native or custom dropdown
+- `page_fetch_json(tab_id, path, max_length=20000)` - Read-only GET to the page's own origin, with its sign-in. Needs "Run scripts" in the add-on's settings
 - `content_scroll(tab_id, delta_y=600, delta_x=0, ref=None, selector=None, x=None, y=None, text=None)` - Scroll whatever scrolls at an element or point, including inner containers
 - `content_hover(tab_id, ref=None, selector=None, x=None, y=None, text=None)` - Move the mouse onto an element or a point without clicking
   - Opens hover menus and shows tooltips or buttons that only appear on hover

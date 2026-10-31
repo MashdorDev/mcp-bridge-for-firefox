@@ -2805,6 +2805,82 @@ class FoxMCPTools:
             return (f"Timed out after {min(timeout, WAIT_MAX_S):g} s waiting for {what}{' to go' if gone else ''}. {state}"
                     + (f". Last error: {last_error}" if last_error else ""))
 
+        @self._tool()
+        async def content_dialogs(tab_id: int) -> str:
+            """List the dialogs open on a page with their buttons, including an
+            invisible one or a backdrop that is taking the page's clicks
+
+            Args:
+                tab_id: ID of the tab
+            """
+            data, error = await page_request({"action": "content.dialogs", "data": {"tabId": tab_id}})
+            if error:
+                return f"Failed to list dialogs: {error}"
+            dialogs = data.get("dialogs") or []
+            if not dialogs:
+                return "No dialogs are open"
+            lines = []
+            for dialog in dialogs:
+                notes = [note for note, on in (("invisible", dialog.get("invisible")), ("takes the page's clicks", dialog.get("blocking")))
+                         if on]
+                notes = f" ({', '.join(notes)})" if notes else ""
+                lines.append(f"- [{dialog['ref']}] {dialog.get('label') or 'unnamed'}{notes}: {dialog.get('text') or 'no text'}")
+                if dialog.get("buttons"):
+                    lines.append("  Buttons: " + ", ".join(f"[{b['ref']}] {b['name']}" for b in dialog["buttons"]))
+            return PageContent("\n".join(lines))
+
+        @self._tool()
+        async def content_select_option(
+            tab_id: int, option: str, ref: Optional[str] = None, selector: Optional[str] = None,
+            text: Optional[str] = None, timeout: float = 5.0
+        ) -> str:
+            """Choose an option in a dropdown, native or custom: opens it from the
+            given element, waits for the option to show, and clicks it
+
+            Args:
+                tab_id: ID of the tab
+                option: The text of the option to choose
+                ref: The dropdown's ref from content_snapshot
+                selector: CSS selector of the dropdown
+                text: The dropdown's visible text or label
+                timeout: Most seconds to wait for the option to show (default: 5)
+            """
+            look = {"action": "content.find_option", "data": {**target(tab_id, ref, selector, text), "option": option}}
+            found, error = await page_request(look)
+            if error:
+                return f"Failed to choose {option}: {error}"
+            if found.get("native"):
+                return await content_type(tab_id, option, ref=ref, selector=selector, field=text)
+            opened = await content_click(tab_id, ref=ref, selector=selector, text=text)
+            deadline = time.monotonic() + timeout
+            while not found.get("ref") and time.monotonic() < deadline:
+                await asyncio.sleep(WAIT_POLL_S)
+                found, error = await page_request(look)
+                if error:
+                    return f"Opened it, but failed to find {option}: {error}"
+            if not found.get("ref"):
+                shows = ", ".join(found.get("shown") or []) or "none"
+                return f'{opened}. No option named "{option}" showed within {timeout:g} s. Options showing: {shows}'
+            return await content_click(tab_id, ref=found["ref"])
+
+        @self._tool()
+        async def page_fetch_json(tab_id: int, path: str, max_length: Optional[int] = TEXT_LIMIT) -> str:
+            """Read-only: a GET to the page's own origin, with its sign-in, returning
+            the status and body. It cannot write or reach another site
+
+            Args:
+                tab_id: ID of the tab whose origin to read from
+                path: Path on that origin, such as /api/items?page=2
+                max_length: Most characters of the body to return (default: 20000; null for all)
+            """
+            data, error = await page_request({"action": "content.fetch_json", "data": {"tabId": tab_id, "path": path}})
+            if error:
+                return f"Failed to fetch {path}: {error}"
+            body = data.get("body", "")
+            if max_length is not None and len(body) > max_length:
+                body = f"{body[:max_length]}\n\n[Cut at {max_length} of {len(body)} characters: a larger max_length gets more]"
+            return PageContent(f"{data.get('status')} {data.get('url')}\n{body}")
+
         # Snapshot Tool
         @self._tool()
         async def content_snapshot(tab_id: int, max_elements: int = 300) -> str:
