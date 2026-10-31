@@ -1096,7 +1096,7 @@ const AGENT_ACTIVITY = {
   'content.real_input_prep': ['clicking', 'Clicking'],
   'content.real_pointer_prep': ['clicking', 'Moving the mouse'],
   'content.hover': ['clicking', 'Pointing'],
-  'content.scroll': ['working', 'Scrolling'],
+  'content.scroll': ['scrolling', 'Scrolling'],
   'content.drag': ['clicking', 'Dragging'],
   'content.check_typed': ['typing', 'Typing'],
   'content.real_input_arrived': ['typing', 'Pressing a key'],
