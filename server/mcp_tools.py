@@ -672,6 +672,9 @@ class FoxMCPTools:
 
             if response.get("type") == "response" and "data" in response:
                 if response["data"].get("success"):
+                    if response["data"].get("focused") is False:
+                        return (f"Window {window_id} did not come to the front: Windows refused it, as it does "
+                                "for a program in the background. Real input works without it")
                     return f"Window {window_id} focused successfully"
                 else:
                     return f"Failed to focus window {window_id}"
