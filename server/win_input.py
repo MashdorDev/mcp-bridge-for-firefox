@@ -178,8 +178,9 @@ GIVE_BACK_POLL_S = 0.01
 GIVE_BACK_DOUBT_S = 5.0
 # How long the foreground may read as nobody's while it changes
 NO_FOREGROUND_WAIT_S = 0.3
+# What an add-on too old to say its window's own prefix uses
 AGENT_WINDOW_PREFACE = '[Agent] '
-# One action at a time across every server on this computer: how long to wait
+# One action at a time across every server using one Firefox: how long to wait
 MACHINE_TURN_WAIT_S = 30.0
 MACHINE_TURN_POLL_S = 0.05
 # Background windows made active, and the timer that steps each one down
@@ -227,14 +228,17 @@ async def wait_to_change_tabs():
 
 
 @asynccontextmanager
-async def machine_turn():
+async def machine_turn(browser: str = ''):
     """Activation belongs to a Firefox, and one add-on serves several servers: one
     giving a window back mid-way through another's text would send the rest to
-    the person. The operating system drops the lock if its holder dies."""
+    the person. Per browser, as another profile is another process with its own
+    activation and has no need to wait. The operating system drops the lock if
+    its holder dies."""
     if not AVAILABLE:
         yield
         return
-    with open(os.path.join(tempfile.gettempdir(), 'mcp-bridge-real-input.lock'), 'a+b') as lock:
+    name = 'mcp-bridge-real-input-' + re.sub(r'\W', '', str(browser)) + '.lock'
+    with open(os.path.join(tempfile.gettempdir(), name), 'a+b') as lock:
         deadline = time.monotonic() + MACHINE_TURN_WAIT_S
         while True:
             try:
@@ -308,9 +312,9 @@ def hidden_window(title: str, x: int, y: int) -> int:
     return minimised[0]
 
 
-def untitled_agent_window(candidates: List[int]) -> int:
+def untitled_agent_window(candidates: List[int], preface: str) -> int:
     """A page with no title says nothing, but the agent window still has its prefix"""
-    windows = [hwnd for hwnd in candidates if window_title(hwnd).startswith(AGENT_WINDOW_PREFACE)]
+    windows = [hwnd for hwnd in candidates if window_title(hwnd).startswith(preface)]
     if len(windows) != 1:
         raise WindowNotShowing("the page has no title to tell its Firefox window from the others")
     return windows[0]
@@ -341,8 +345,9 @@ class WindowInput:
         self.agent_window = bool(prep.get('agentWindow'))
         # Only the add-on's own window: the person can be in an agent profile's
         self.own_window = bool(prep.get('ownWindow'))
+        self.preface = prep.get('windowPreface') or AGENT_WINDOW_PREFACE
         if self.agent_window and self.title:
-            self.title = AGENT_WINDOW_PREFACE + self.title
+            self.title = self.preface + self.title
         self.point = prep.get('point')
         self.hwnd = 0
         self.thread = 0
@@ -361,7 +366,7 @@ class WindowInput:
         if self.hidden:
             # The tab may not have come up yet, and hidden no longer says so
             await asyncio.sleep(ACTIVATE_SETTLE_S)
-            self.hwnd = (untitled_agent_window(firefox_windows(minimised=True)) if self.agent_window and not self.title
+            self.hwnd = (untitled_agent_window(firefox_windows(minimised=True), self.preface) if self.agent_window and not self.title
                          else hidden_window(self.title, x, y))
             self.thread = user32.GetWindowThreadProcessId(self.hwnd, None)
             return self
@@ -374,7 +379,7 @@ class WindowInput:
         if self.title:
             windows = [hwnd for hwnd in windows if shows_page(window_title(hwnd), self.title)]
         elif self.agent_window:
-            windows = [untitled_agent_window(windows)]
+            windows = [untitled_agent_window(windows, self.preface)]
         elif len(windows) > 1:
             # A page with no title yet says nothing, so it takes the spot being
             # beyond doubt

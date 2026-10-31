@@ -2555,7 +2555,7 @@ class FoxMCPTools:
                 return None
             try:
                 async with server.real_input_turn:
-                    async with machine_turn():
+                    async with machine_turn(CALL_BROWSER.get() or server.active_browser):
                         try:
                             return await real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name)
                         finally:
