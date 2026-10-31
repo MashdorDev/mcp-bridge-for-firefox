@@ -691,6 +691,11 @@ async function connectionDetails() {
 // Handle popup requests for connection status
 browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
+  if (request.action === 'pause') {
+    setTimeout(() => sendResponse({}), request.ms);
+    return true;
+  }
+
   // A page's content script asks as soon as it starts, which is seconds earlier
   // than the tab's load completing (that waits for the favicon and the rest)
   if (request.action === 'isAgentTab') {

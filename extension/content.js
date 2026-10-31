@@ -472,11 +472,18 @@ function watchRealInput(token, kind) {
 const inFrame = el => el instanceof HTMLIFrameElement || el instanceof HTMLFrameElement ||
   el instanceof HTMLObjectElement || el instanceof HTMLEmbedElement;
 
+// Firefox holds a hidden page's timers back to about a second each, and the tab of
+// a real click is often hidden again by now. The background page's run on time.
+function pause(ms) {
+  if (!document.hidden) return new Promise(resolve => setTimeout(resolve, ms));
+  return browser.runtime.sendMessage({ action: 'pause', ms }).catch(() => new Promise(resolve => setTimeout(resolve, ms)));
+}
+
 async function realInputArrived(token) {
   const watch = realInputWatches.get(token);
   if (!watch) return null;
   for (let waited = 0; !watch.count && waited < LATE_INPUT_MS; waited += 100) {
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await pause(100);
   }
   watch.stop();
   return watch.count > 0;
@@ -548,13 +555,13 @@ function coverOf(el) {
 // for the page to react, since most clicks do nothing visible to these checks
 const CLICK_EFFECT_MS = [80, 300];
 async function clickEffect(before) {
-  await new Promise(resolve => setTimeout(resolve, CLICK_EFFECT_MS[0]));
+  await pause(CLICK_EFFECT_MS[0]);
   const seen = pageState(before.el && before.el.isConnected ? before.el : null);
   // Only a change that is the outcome: focus and aria-expanded move first, and
   // the dialog or menu they lead to can still be on its way
   const done = seen.url !== before.url || seen.overlays.length !== before.overlays.length
     || (before.el && !before.el.isConnected);
-  if (!done) await new Promise(resolve => setTimeout(resolve, CLICK_EFFECT_MS[1] - CLICK_EFFECT_MS[0]));
+  if (!done) await pause(CLICK_EFFECT_MS[1] - CLICK_EFFECT_MS[0]);
   const after = pageState(before.el && before.el.isConnected ? before.el : null);
   const changes = [];
   if (after.url !== before.url) changes.push(`the page went to ${after.url}`);
@@ -803,7 +810,7 @@ async function checkTypedSettled(el, text, cleared) {
       if (Date.now() - changedAt >= TYPED_STILL_MS || Date.now() - started >= TYPED_WAIT_MAX_MS) throw error;
     }
     const before = Date.now();
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await pause(100);
     // A busy page is not a still one: it may be about to apply the rest
     if (Date.now() - before > 3 * 100) changedAt = Date.now();
   }
@@ -883,7 +890,7 @@ async function commitField(el, refocus) {
     field.dispatchEvent(new Event('change', { bubbles: true }));
   }
   // Frameworks turn the text into a chip on their next render, not during blur
-  await new Promise(resolve => setTimeout(resolve, COMMIT_SETTLE_MS));
+  await pause(COMMIT_SETTLE_MS);
   const emptied = !field.isConnected || !(field.isContentEditable ? field.innerText : field.value || '').trim();
   if (refocus && field.isConnected) field.focus();
   return emptied;
