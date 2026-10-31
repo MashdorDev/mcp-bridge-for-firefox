@@ -13,9 +13,10 @@ from typing import Dict, Any
 import sys
 import os
 import logging
+import time
 
 from port_coordinator import get_port_by_type, coordinated_test_ports
-from server.server import FoxMCPServer
+from server.server import FoxMCPServer, port_is_free
 from firefox_test_utils import FirefoxTestManager, resolve_firefox_path
 from test_config import FIREFOX_TEST_CONFIG
 
@@ -92,6 +93,27 @@ def firefox_with_test_ports():
         return None
 
 
+PORT_RELEASE_WAIT_S = 3.0
+previous_test = None
+
+
+@pytest.fixture(autouse=True)
+def individual_port_is_free(request):
+    """A test's server moves to the next port if its own is taken, while the test
+    dials the first and fails, or skips, for a reason nothing names. Give a server
+    still closing a moment, and name the test before this one if it never does."""
+    global previous_test
+    if 'integration' in str(request.node.path):
+        port = get_port_by_type('test_individual')
+        deadline = time.monotonic() + PORT_RELEASE_WAIT_S
+        while not port_is_free(port) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if not port_is_free(port):
+            print(f"::warning::Port {port} still taken before {request.node.nodeid}, after {previous_test}", file=sys.__stderr__)
+    previous_test = request.node.nodeid
+    yield
+
+
 @pytest_asyncio.fixture
 async def server_with_extension():
     """
@@ -144,7 +166,7 @@ async def server_with_extension():
 
             # Wait for extension to connect using awaitable mechanism
             connected = await firefox.async_wait_for_extension_connection(
-                timeout=FIREFOX_TEST_CONFIG['extension_install_wait'], server=server
+                timeout=FIREFOX_TEST_CONFIG['extension_connect_timeout'], server=server
             )
 
             # Verify connection

@@ -111,7 +111,7 @@ class TestMCPServerIntegration:
         ) as firefox:
             assert firefox.setup_and_start_firefox(headless=True, skip_on_failure=False)
             connected = await firefox.async_wait_for_extension_connection(
-                timeout=FIREFOX_TEST_CONFIG['extension_install_wait'] + 5.0,
+                timeout=FIREFOX_TEST_CONFIG['extension_connect_timeout'],
                 server=full_mcp_system['server']
             )
             assert connected, "The extension should connect to the test server"
@@ -164,7 +164,7 @@ class TestMCPServerIntegration:
             assert success, "Firefox setup and extension installation should succeed"
 
             # Wait for extension to connect using awaitable mechanism (give it more time)
-            max_wait_time = FIREFOX_TEST_CONFIG['extension_install_wait'] + 5.0
+            max_wait_time = FIREFOX_TEST_CONFIG['extension_connect_timeout']
             print(f"Waiting up to {max_wait_time}s for extension to connect...")
 
             connected = await firefox.async_wait_for_extension_connection(
@@ -215,7 +215,7 @@ class TestMCPServerIntegration:
 
             # Wait for extension to connect using awaitable mechanism
             connected = await firefox.async_wait_for_extension_connection(
-                timeout=FIREFOX_TEST_CONFIG['extension_install_wait'], server=server
+                timeout=FIREFOX_TEST_CONFIG['extension_connect_timeout'], server=server
             )
 
             if not connected:

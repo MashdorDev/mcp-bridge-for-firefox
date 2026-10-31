@@ -20,7 +20,7 @@ from pathlib import Path
 
 import test_imports  # Automatic path setup
 from server.server import FoxMCPServer
-from test_config import TEST_PORTS, connect_as_extension
+from test_config import FIREFOX_TEST_CONFIG, TEST_PORTS, connect_as_extension
 from firefox_test_utils import FirefoxTestManager
 from port_coordinator import get_port_by_type
 from mcp_client_harness import DirectMCPTestClient
@@ -132,7 +132,7 @@ user_pref("browser.tabs.remote.autostart", false);
             if success:
                 # Use the new awaitable connection mechanism
                 connection_detected = await firefox_manager.async_wait_for_extension_connection(
-                    timeout=10.0, server=running_server
+                    timeout=FIREFOX_TEST_CONFIG['extension_connect_timeout'], server=running_server
                 )
             
         except Exception as e:
@@ -164,7 +164,7 @@ user_pref("browser.tabs.remote.autostart", false);
 
             # Wait for extension to connect using the new awaitable mechanism
             connected = await firefox.async_wait_for_extension_connection(
-                timeout=10.0, server=running_server
+                timeout=FIREFOX_TEST_CONFIG['extension_connect_timeout'], server=running_server
             )
             if not connected:
                 pytest.skip("Extension failed to connect to server")

@@ -16,6 +16,7 @@ from server.server import FoxMCPServer
 from port_coordinator import coordinated_test_ports
 from mcp_client_harness import DirectMCPTestClient
 from firefox_test_utils import FirefoxTestManager, resolve_firefox_path
+from test_config import FIREFOX_TEST_CONFIG
 
 
 @pytest.mark.asyncio
@@ -112,7 +113,7 @@ async def test_complete_mcp_to_firefox_chain():
                 # Wait for extension to connect using awaitable mechanism
                 print("⏳ Waiting for extension to connect...")
 
-                connection_timeout = 15.0  # Give more time for real Firefox
+                connection_timeout = FIREFOX_TEST_CONFIG['extension_connect_timeout']
                 connected = await firefox.async_wait_for_extension_connection(
                     timeout=connection_timeout, server=server
                 )
