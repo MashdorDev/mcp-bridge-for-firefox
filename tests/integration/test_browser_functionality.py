@@ -229,8 +229,7 @@ class TestBrowserFunctionality:
         print(f"   Script result: {script_content}")
 
         # Verify we got a result
-        assert script_content and not script_content.startswith("Error"), "Script should run"
-            "Should get script execution result"
+        assert script_content and not script_content.startswith("Error"), "Should get script execution result"
 
         print("✅ End-to-end JavaScript execution test successful!")
 
@@ -385,8 +384,8 @@ class TestBrowserFunctionality:
         limited_content = limited_text_result.get('content', '')
         print(f"   Limited text content received: {len(limited_content)} chars")
 
-        # Verify truncation occurred (accounting for header text)
-        assert "..." in limited_content, "Limited content should be truncated"
+        # Verify truncation occurred
+        assert "[Cut at 100 of" in limited_content, "Limited content should say it was cut"
         assert len(limited_content) < len(text_content), "Limited content should be shorter than unlimited"
 
         print("✅ End-to-end content_get_text test successful!")

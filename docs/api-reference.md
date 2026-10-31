@@ -88,7 +88,7 @@ it, which keeps the tool list shorter.
 
 ### Content Access
 - `content_get_text(tab_id, max_length=20000)` - Extract page text content
-  - `max_length`: Optional maximum length of text to return (default: unlimited)
+  - `max_length`: Most characters to return (default: 20000; null for all)
 - `content_get_html(tab_id)` - Get page HTML source
 - `content_execute_script(tab_id, code)` - Execute JavaScript directly
 - `content_snapshot(tab_id, max_elements=300)` - List visible interactive elements, each with a ref

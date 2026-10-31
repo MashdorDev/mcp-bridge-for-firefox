@@ -413,9 +413,11 @@ const CLICK_EFFECT_MS = [80, 300];
 async function clickEffect(before) {
   await new Promise(resolve => setTimeout(resolve, CLICK_EFFECT_MS[0]));
   const seen = pageState(before.el && before.el.isConnected ? before.el : null);
-  const same = ['url', 'focus', 'expanded', 'checked'].every(key => seen[key] === before[key])
-    && seen.overlays.length === before.overlays.length && (!before.el || before.el.isConnected);
-  if (same) await new Promise(resolve => setTimeout(resolve, CLICK_EFFECT_MS[1] - CLICK_EFFECT_MS[0]));
+  // Only a change that is the outcome: focus and aria-expanded move first, and
+  // the dialog or menu they lead to can still be on its way
+  const done = seen.url !== before.url || seen.overlays.length !== before.overlays.length
+    || (before.el && !before.el.isConnected);
+  if (!done) await new Promise(resolve => setTimeout(resolve, CLICK_EFFECT_MS[1] - CLICK_EFFECT_MS[0]));
   const after = pageState(before.el && before.el.isConnected ? before.el : null);
   const changes = [];
   if (after.url !== before.url) changes.push(`the page went to ${after.url}`);

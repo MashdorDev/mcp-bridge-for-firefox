@@ -210,12 +210,18 @@ def slim_schema(schema: Any) -> Any:
             and not (key == 'default' and value is None)
             and not (key == 'additionalProperties' and value is False)}
     options = slim.get('anyOf')
-    if options:
+    # With a real default, null means something a missing argument doesn't
+    if options and 'default' not in slim:
         real = [option for option in options if option != {'type': 'null'}]
         if len(real) == 1:
             del slim['anyOf']
             slim.update(real[0])
     return slim
+
+
+class PageContent(str):
+    """Text from the page or a script, which may start like a failure ("Error 404")
+    and still be a successful read"""
 
 
 class FoxMCPTools:
@@ -378,7 +384,7 @@ class FoxMCPTools:
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
             result = await fn(*args, **kwargs)
-            if isinstance(result, str) and FAILURE_RESULT.match(result):
+            if isinstance(result, str) and not isinstance(result, PageContent) and FAILURE_RESULT.match(result):
                 raise ToolError(result)
             return result
         return wrapper
@@ -2363,8 +2369,8 @@ class FoxMCPTools:
                     return f"No text content found in tab {tab_id}"
 
                 if max_length is not None and len(text) > max_length:
-                    return f"{text[:max_length]}\n\n[Cut at {max_length} of {len(text)} characters: a larger max_length gets more]"
-                return text
+                    return PageContent(f"{text[:max_length]}\n\n[Cut at {max_length} of {len(text)} characters: a larger max_length gets more]")
+                return PageContent(text)
             elif response.get("type") == "error":
                 error_msg = response.get("data", {}).get("message", "Unknown error")
                 return f"Failed to get page text: {error_msg}"
@@ -2443,7 +2449,7 @@ class FoxMCPTools:
                 result = response["data"].get("result")
                 if result is None:
                     return "Script ran, no return value"
-                return str(result)
+                return PageContent(result)
             elif response.get("type") == "error":
                 error_msg = response.get("data", {}).get("message", "Unknown error")
                 return f"Failed to execute script: {error_msg}"
