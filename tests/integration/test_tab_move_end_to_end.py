@@ -156,7 +156,11 @@ class TestReorderWithinAWindow:
         client = DirectMCPTestClient(setup['server'].mcp_tools)
         await client.connect()
 
-        await call(client, "tabs_create", {"url": "https://example.org/last", "active": False})
+        # In a window with a tab in it: on its own in the agent's window, it would
+        # already be at the front
+        first_window = re.search(r"\[window (\d+),", await call(client, "tabs_list")).group(1)
+        await call(client, "tabs_create", {"url": "https://example.org/last", "active": False,
+                                           "window_id": int(first_window)})
 
         listing = await call(client, "tabs_list")
         target_ids = tab_ids_for(listing, "/last")
