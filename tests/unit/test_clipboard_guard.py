@@ -38,8 +38,9 @@ class StubWebSocketServer:
 
 @pytest.fixture
 def clipboard(monkeypatch):
-    state = {"stamp": 1, "copy_changes": 1}
+    state = {"stamp": 1, "copy_changes": 1, "idle": 3600}
     monkeypatch.setattr(mcp_tools, "clipboard_sequence", lambda: state["stamp"], raising=False)
+    monkeypatch.setattr(mcp_tools, "seconds_idle", lambda: state["idle"], raising=False)
     monkeypatch.setattr(mcp_tools, "COPY_WAIT_S", 0.3)
     return state
 
@@ -68,6 +69,20 @@ def sent(server, action):
 
 
 class TestPasteGuard:
+
+    @pytest.mark.asyncio
+    async def test_a_copy_while_the_person_is_at_the_computer_may_be_theirs(self, monkeypatch, call_tool, clipboard):
+        monkeypatch.setattr(mcp_tools, "WINDOW_INPUT", True)
+        clipboard["idle"] = 0
+        result = await call_tool("content_press_key", tab_id=4, key="Control+c")
+        assert "isn't taken as the agent's copy" in result
+        assert (await call_tool("content_press_key", tab_id=4, key="Control+v")).startswith("Failed to paste")
+
+    @pytest.mark.asyncio
+    async def test_a_copy_while_the_person_is_away_is_the_agents(self, monkeypatch, call_tool):
+        monkeypatch.setattr(mcp_tools, "WINDOW_INPUT", True)
+        assert "clipboard now holds the copy" in await call_tool("content_press_key", tab_id=4, key="Control+c")
+        assert not (await call_tool("content_press_key", tab_id=4, key="Control+v")).startswith("Failed to paste")
 
     @pytest.mark.asyncio
     async def test_the_persons_clipboard_is_not_pasted(self, call_tool, server):

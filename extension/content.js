@@ -351,6 +351,7 @@ function openDialogs() {
 const OPTIONS = '[role=option], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [role=treeitem], [data-value], li';
 // What already showed before a dropdown was opened, such as a sidebar's list items
 let shownBeforeOpening = new WeakSet();
+let openedAlready = false;
 
 function shownOptions() {
   return [...document.querySelectorAll(OPTIONS)].filter(el => isShown(el) && el.getAttribute('aria-disabled') !== 'true');
@@ -360,15 +361,22 @@ function findOption(data) {
   const dropdown = findTarget(data);
   if (dropdown instanceof HTMLSelectElement) return { native: true };
   if (data.beforeOpening) {
-    const open = dropdown.getAttribute('aria-expanded') === 'true';
-    shownBeforeOpening = new WeakSet(open ? [] : shownOptions());
-    return { open };
+    openedAlready = dropdown.getAttribute('aria-expanded') === 'true';
+    shownBeforeOpening = new WeakSet(openedAlready ? [] : shownOptions());
+    return { open: openedAlready };
   }
   const wanted = data.option.replace(/\s+/g, ' ').trim().toLowerCase();
-  const options = shownOptions().filter(el => !shownBeforeOpening.has(el) && el !== dropdown && !el.contains(dropdown));
+  // The list it names, where it names one
+  const list = document.getElementById((dropdown.getAttribute('aria-controls') || dropdown.getAttribute('aria-owns') || '').split(/\s+/)[0]);
+  const options = shownOptions().filter(el => !shownBeforeOpening.has(el) && el !== dropdown && !el.contains(dropdown) &&
+    (!list || list.contains(el)));
+  const named = options.filter(el => nameOf(el) === wanted);
+  // The innermost of a <li> and the option inside it, which share a name
+  const matches = named.filter(el => !named.some(other => other !== el && el.contains(other)));
+  // Nothing was opened to show which are new, so even a lone match could be a sidebar's
+  if (openedAlready && !list && matches.length) return { ambiguous: true };
   let best = null;
-  for (const el of options) {
-    if (nameOf(el) !== wanted) continue;
+  for (const el of matches) {
     const score = [el.matches('li') ? 0 : 1, -el.getElementsByTagName('*').length];
     if (!best || outranks(score, best.score)) best = { el, score };
   }
@@ -392,6 +400,12 @@ async function fetchJson({ path, maxLength }) {
   return { status: answer.status, url: answer.url, length: body.length, body: body.slice(0, maxLength ?? FETCH_BODY_MAX) };
 }
 
+// Styles change what innerText says ("Saving" can read "SAVING"), and it breaks
+// lines between blocks where a snapshot shows one phrase
+function plainText(text) {
+  return (text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 function waitCheck({ selector, text, title, gone }) {
   let seen;
   if (selector) {
@@ -401,10 +415,9 @@ function waitCheck({ selector, text, title, gone }) {
       return { invalid: error.message };
     }
   } else if (text) {
-    // Lower case, as styles change what innerText says: "Saving" can read "SAVING"
-    seen = (document.body?.innerText || '').toLowerCase().includes(text.toLowerCase());
+    seen = plainText(document.body?.innerText).includes(plainText(text));
   } else {
-    seen = document.title.toLowerCase().includes(title.toLowerCase());
+    seen = plainText(document.title).includes(plainText(title));
   }
   return { met: gone ? !seen : seen, title: document.title, url: location.href, frames: Boolean(document.querySelector('iframe, frame')) };
 }

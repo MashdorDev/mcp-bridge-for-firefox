@@ -2721,16 +2721,18 @@ class FoxMCPTools:
             data, error = await page_request({"action": "content.clipboard_fingerprint", "data": {}})
             return None if error else data.get("fingerprint")
 
-        async def note_copy(before) -> str:
+        async def note_copy(before, since=None) -> str:
             """After keys that copy: wait for the app to fill the clipboard and
             remember it as the agent's, or say nothing was copied"""
             started = time.monotonic()
             deadline = started + COPY_WAIT_S
+            # From when the stamp was read, which real input may have waited behind
+            since = since or started
             while time.monotonic() < deadline:
                 now = await clipboard_stamp()
                 if now is not None and now != before:
                     # Theirs if they could have done it, and pasting theirs leaks it
-                    if WINDOW_INPUT and seconds_idle() < time.monotonic() - started:
+                    if WINDOW_INPUT and seconds_idle() < time.monotonic() - since:
                         return ". The clipboard changed, but the person was using the computer, so it isn't taken as the agent's copy"
                     clipboard["agent"] = now
                     return ". The clipboard now holds the copy"
@@ -2888,6 +2890,9 @@ class FoxMCPTools:
                     return f"Opened it, but failed to find {option}: {error}"
                 if found.get("ref"):
                     return await content_click(tab_id, ref=found["ref"])
+                if found.get("ambiguous"):
+                    return (f'This dropdown was already open and doesn\'t say which list is its own, so nothing '
+                            f'shows that "{option}" belongs to it. Close it first, or click the option by its ref')
                 if time.monotonic() >= deadline:
                     break
                 await asyncio.sleep(WAIT_POLL_S)
@@ -2988,12 +2993,12 @@ class FoxMCPTools:
                 if error:
                     return f"Failed to click: {error}"
                 return f"{done} {data.get('clicked')}{effect_of(data)}"
-            copy_before = None
+            copy_before = copy_at = None
 
             async def click_for_real(bidi, context, element):
-                # Now, after any wait for the person to pause
-                nonlocal copy_before
+                nonlocal copy_before, copy_at
                 copy_before = clipboard_sequence() if WINDOW_INPUT and not right_click else None
+                copy_at = time.monotonic()
                 await bidi.click(context, element, button=2 if right_click else 0,
                                  clicks=2 if double_click and not right_click else 1)
 
@@ -3002,7 +3007,7 @@ class FoxMCPTools:
                 prep, error = real
                 if error:
                     return f"Failed to click: {error}"
-                copied = await note_copy(copy_before) if copy_before is not None and COPY_BUTTON.search(str(prep.get('target'))) else ""
+                copied = await note_copy(copy_before, copy_at) if copy_before is not None and COPY_BUTTON.search(str(prep.get('target'))) else ""
                 return f"{done} {prep.get('target')} (real input){await click_effect(tab_id, prep)}{copied}"
             if refusal := scripted_refusal("click"):
                 return refusal
@@ -3290,13 +3295,15 @@ class FoxMCPTools:
                     return refusal
             copy_before = await clipboard_stamp() if COPY_KEYS.match(key) else None
 
+            copy_at = None
+
             async def press_for_real(bidi, context, element):
-                nonlocal copy_before
+                nonlocal copy_before, copy_at
                 if element:
                     await bidi.click(context, element)
-                # Now, after any wait for the person to pause
                 if copy_before is not None:
                     copy_before = await clipboard_stamp()
+                    copy_at = time.monotonic()
                 await bidi.press(context, key)
 
             real = await real_input(tab_id, ref, selector, "key", press_for_real)
@@ -3304,7 +3311,7 @@ class FoxMCPTools:
                 prep, error = real
                 if error:
                     return f"Failed to press {key}: {error}"
-                copied = await note_copy(copy_before) if COPY_KEYS.match(key) else ""
+                copied = await note_copy(copy_before, copy_at) if COPY_KEYS.match(key) else ""
                 # Firefox keeps some combinations for itself (Control+t), and
                 # those never reach the page anyway
                 unseen = ""
