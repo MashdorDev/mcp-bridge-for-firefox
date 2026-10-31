@@ -1199,6 +1199,10 @@ async function navigated(tabId, go) {
 // showing their tab, and each hides the other's page in the middle of its work.
 const agentWindows = new Map();  // window id -> the prefix in its title
 const agentWindowOf = new Map();  // server's socket -> its window id
+const agentWindowUsedAt = new Map();  // window id -> when a session last worked in it
+// A window with no server may only have one that is reconnecting, with its tabs
+// still in it. Only after this long is it free for another session.
+const AGENT_WINDOW_FREE_AFTER_MS = 5 * 60 * 1000;
 const shownInsteadOf = new Map();  // agent tab -> { previous: the person's tab, token: the action, socket: its server }
 let agentWindowTurn = Promise.resolve();
 const prefacedWindows = new Set();
@@ -1227,13 +1231,19 @@ function loadAgentWindows() {
     const ours = new RegExp(`^\\[Agent ${profile.slice(0, 4)}(\\.\\d+)?\\] `);
     for (const window of await browser.windows.getAll()) {
       const preface = (window.title || '').match(ours);
-      if (preface && !agentWindows.has(window.id)) agentWindows.set(window.id, preface[0]);
+      if (preface && !agentWindows.has(window.id)) {
+        agentWindows.set(window.id, preface[0]);
+        agentWindowUsedAt.set(window.id, Date.now());
+      }
     }
   })();
   return agentWindowsLoaded;
 }
 
-browser.windows.onRemoved.addListener(id => agentWindows.delete(id));
+browser.windows.onRemoved.addListener(id => {
+  agentWindows.delete(id);
+  agentWindowUsedAt.delete(id);
+});
 
 // A server gone by now must not hold a window nothing will ever free
 function claimAgentWindow(socket, windowId) {
@@ -1268,10 +1278,12 @@ async function openTabInAgentWindow(options, socket) {
   if (!agentWindows.has(windowId)) {
     // Left by a server that has gone, so a restarted session has no new window each time
     const taken = new Set(agentWindowOf.values());
-    windowId = [...agentWindows.keys()].find(id => !taken.has(id));
+    windowId = [...agentWindows.keys()].find(id => !taken.has(id) &&
+      Date.now() - (agentWindowUsedAt.get(id) || 0) >= AGENT_WINDOW_FREE_AFTER_MS);
   }
   if (windowId !== undefined) {
     claimAgentWindow(socket, windowId);
+    agentWindowUsedAt.set(windowId, Date.now());
     // Not active: this server may be mid-action in the tab showing there, and the
     // action that needs this one brings it up
     return browser.tabs.create({ ...options, active: false, windowId });
@@ -1285,6 +1297,7 @@ async function openTabInAgentWindow(options, socket) {
   // The server brings it back behind everything when it needs to aim a click.
   const created = await browser.windows.create({ url: options.url, state: 'minimized', titlePreface });
   agentWindows.set(created.id, titlePreface);
+  agentWindowUsedAt.set(created.id, Date.now());
   claimAgentWindow(socket, created.id);
   const [tab] = created.tabs;
   return options.pinned ? browser.tabs.update(tab.id, { pinned: true }) : tab;
@@ -1298,6 +1311,7 @@ async function showForRealInput(data, socket) {
   data.agentWindow = ownWindow;
   data.ownWindow = ownWindow;
   data.windowPreface = agentWindows.get(tab.windowId);
+  if (ownWindow) agentWindowUsedAt.set(tab.windowId, Date.now());
   // Working in it says it is taken, which only a new tab said until now, and that
   // is forgotten when the add-on reloads
   if (ownWindow && !agentWindowOf.has(socket) && ![...agentWindowOf.values()].includes(tab.windowId)) {
