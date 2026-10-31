@@ -841,7 +841,9 @@ async function handleTabsAction(id, action, data) {
           createTabOptions.pinned = data.pinned;
         }
         
-        const newTab = await browser.tabs.create(createTabOptions);
+        const newTab = !data.windowId && !settings.followAgent
+          ? await tabInAgentWindow(createTabOptions)
+          : await browser.tabs.create(createTabOptions);
         const call = agentCalls.get(id);
         markAgentActive(newTab.id, {
           state: 'waiting', label: AGENT_ACTIVITY['tabs.create'][1],
@@ -1158,6 +1160,44 @@ async function navigated(tabId, go) {
   }
 }
 
+// Real input only reaches the tab showing in a window. With "Show me the tab the
+// agent works in" off, the agent's own tabs live in a window of their own, where
+// showing one takes nothing away from the person. A tab it is told to use in
+// their window is shown just for the action, then theirs comes back.
+let agentWindowId = null;
+const shownInsteadOf = new Map();  // agent tab -> the person's tab it replaced
+
+async function tabInAgentWindow(options) {
+  const window = agentWindowId && await browser.windows.get(agentWindowId).catch(() => null);
+  if (window) return browser.tabs.create({ ...options, active: true, windowId: agentWindowId });
+  // Minimised, because Firefox gives a new window the foreground whatever
+  // focused says, and on the person's screen that is what this exists to avoid.
+  // The server brings it back behind everything when it needs to aim a click.
+  const created = await browser.windows.create({ url: options.url, state: 'minimized' });
+  agentWindowId = created.id;
+  return created.tabs[0];
+}
+
+async function showForRealInput(data) {
+  const tab = await browser.tabs.get(data.tabId);
+  data.agentWindow = tab.windowId === agentWindowId;
+  if (!tab.active && !settings.followAgent) {
+    const [shown] = await browser.tabs.query({ active: true, windowId: tab.windowId });
+    if (shown) shownInsteadOf.set(data.tabId, shown.id);
+    data.switched = true;
+  }
+  await browser.tabs.update(data.tabId, { active: true });
+}
+
+async function giveTabBack(tabId) {
+  const previous = shownInsteadOf.get(tabId);
+  if (previous === undefined) return;
+  shownInsteadOf.delete(tabId);
+  const tab = await browser.tabs.get(tabId);
+  // Unless the person has since moved on to another tab themselves
+  if (tab.active) await browser.tabs.update(previous, { active: true }).catch(() => {});
+}
+
 function sendAgentState(tabId) {
   const entry = agentTabs.get(tabId);
   if (!entry) return;
@@ -1319,6 +1359,11 @@ async function handleContentAction(id, action, data) {
         }
         break;
 
+      case 'content.real_input_done':
+        await giveTabBack(data.tabId).catch(() => {});
+        sendResponse(id, action, { done: true });
+        break;
+
       case 'content.caret_to_end':
       case 'content.real_input_prep':
       case 'content.real_pointer_prep':
@@ -1340,8 +1385,9 @@ async function handleContentAction(id, action, data) {
           'content.real_input_arrived': 'realInputArrived',
           'content.hover': 'hover', 'content.scroll': 'scroll', 'content.drag': 'drag', 'content.click_effect': 'clickEffect' }[action];
         // Real input posted to the window lands in the tab showing in it
-        if (data.activate) await browser.tabs.update(data.tabId, { active: true });
+        if (data.activate) await showForRealInput(data);
         const pageResult = await sendMessageWithRetry(data.tabId, { action: pageAction, data });
+        if (data.agentWindow && pageResult) pageResult.agentWindow = true;
         if (pageResult && pageResult.error) {
           sendError(id, 'PAGE_ERROR', pageResult.error);
         } else {

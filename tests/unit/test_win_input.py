@@ -202,6 +202,17 @@ def test_a_minimised_window_refuses_a_click(monkeypatch):
         window.client_point(10, 20)
 
 
+def test_the_agent_window_comes_back_behind_everything_and_asks_again(monkeypatch):
+    calls = []
+    monkeypatch.setattr(win_input.user32, 'IsIconic', lambda hwnd: 1, raising=False)
+    monkeypatch.setattr(win_input.user32, 'ShowWindow', lambda hwnd, how: calls.append(how), raising=False)
+    monkeypatch.setattr(win_input.user32, 'SetWindowPos', lambda *a: calls.append(a[1]), raising=False)
+    window = WindowInput({**PREP, 'agentWindow': True})
+    with pytest.raises(WindowNotShowing):
+        window.client_point(10, 20)
+    assert calls == [win_input.SW_SHOWNOACTIVATE, win_input.HWND_BOTTOM]
+
+
 def test_no_screen_position_is_not_worth_retrying():
     with pytest.raises(WindowInputUnavailable) as caught:
         WindowInput({})

@@ -46,6 +46,8 @@ if AVAILABLE:
     EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
 WM_ACTIVATE, WA_INACTIVE, WA_ACTIVE = 0x006, 0, 1
+SW_SHOWNOACTIVATE, HWND_BOTTOM = 4, 1
+SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x1, 0x2, 0x10
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK = 0x200, 0x201, 0x202, 0x203
 WM_RBUTTONDOWN, WM_RBUTTONUP = 0x204, 0x205
 WM_MBUTTONDOWN, WM_MBUTTONUP = 0x207, 0x208
@@ -228,6 +230,7 @@ class WindowInput:
         self.buttons = 0
         self.attached = False
         self.made_active = False
+        self.agent_window = bool(prep.get('agentWindow'))
 
     async def __aenter__(self):
         x, y = self.screen_point(0, 0)
@@ -284,6 +287,12 @@ class WindowInput:
     def client_point(self, x: float, y: float):
         # Read now rather than on entry: the person can minimise it mid-drag
         if user32.IsIconic(self.hwnd):
+            if self.agent_window:
+                # The agent's own window: back behind everything, never activated,
+                # then the page is asked again where it is now
+                user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
+                user32.SetWindowPos(self.hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+                raise WindowNotShowing('the agent window was just restored')
             # Windows moves it off screen, and the restored position is no help
             # for a maximised one: a click aimed from it could hit the wrong thing
             raise WindowInputUnavailable('its window is minimised, where a click cannot be aimed (keys still work)')
