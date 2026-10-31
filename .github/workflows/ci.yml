@@ -45,12 +45,16 @@ jobs:
       - uses: ./.github/actions/setup-python-env
       - run: make test-unit
 
-  suite:
-    name: Full suite
+  suite-shard:
+    name: Full suite part ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # The suite takes about ten minutes locally against real Firefox. The cap is
-    # generous enough for a slow runner and still catches a hang.
-    timeout-minutes: 40
+    # On machines of their own, so the parts can't collide on the test ports. The
+    # cap is generous enough for a slow runner and still catches a hang.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-python-env
@@ -58,6 +62,8 @@ jobs:
 
       - name: Run the suite
         env:
+          TEST_SHARD: ${{ matrix.shard }}/3
+          TEST_SHARD_COLLECTED: ${{ runner.temp }}/collected.txt
           PYTEST_ADDOPTS: --durations=40 --durations-min=1.0 --junitxml=${{ runner.temp }}/junit.xml
         run: make test
 
@@ -86,16 +92,62 @@ jobs:
 
           if skipped:
               sys.exit(f"{skipped} tests skipped; the suite expects none.")
-          if total < 200:
-              sys.exit(f"Only {total} tests collected; the suite should be well over 200.")
+
+      - name: Keep the test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/junit.xml
+            ${{ runner.temp }}/collected.txt
+          if-no-files-found: ignore
 
       - name: Keep the coverage report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage
+          name: coverage-${{ matrix.shard }}
           path: tests/htmlcov/
           if-no-files-found: ignore
+
+  # The one result to look at, and the check that the parts added up to the suite
+  suite:
+    name: Full suite
+    runs-on: ubuntu-latest
+    needs: suite-shard
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: junit-*
+          path: reports
+
+      - name: Every part passed, and every test ran exactly once
+        shell: python
+        env:
+          PARTS: ${{ needs.suite-shard.result }}
+        run: |
+          import collections, glob, os, sys, xml.etree.ElementTree as ET
+
+          if os.environ["PARTS"] != "success":
+              sys.exit(f"A part of the suite did not pass: {os.environ['PARTS']}")
+          reports = glob.glob("reports/*/junit.xml")
+          if len(reports) != 3:
+              sys.exit(f"Expected 3 reports, found {len(reports)}")
+          ran = collections.Counter(
+              (case.get("classname"), case.get("name"))
+              for report in reports for case in ET.parse(report).getroot().iter("testcase"))
+          twice = [test for test, times in ran.items() if times > 1]
+          print(f"{len(ran)} tests across {len(reports)} parts")
+          collected = {open(path).read().strip() for path in glob.glob("reports/*/collected.txt")}
+          if collected != {str(len(ran))}:
+              sys.exit(f"The parts collected {sorted(collected)} tests, and {len(ran)} ran")
+          if twice:
+              sys.exit(f"Ran in more than one part: {twice[:5]}")
+          if len(ran) < 200:
+              sys.exit(f"Only {len(ran)} tests collected; the suite should be well over 200.")
 
   install:
     name: Install from source
