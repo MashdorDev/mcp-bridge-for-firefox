@@ -27,7 +27,7 @@ browser.storage.onChanged.addListener((changes, area) => {
     prefacedWindows.clear();
     browser.windows.getAll().then(windows => {
       for (const { id } of windows) {
-        if (id !== agentWindowId) browser.windows.update(id, { titlePreface: '' }).catch(() => {});
+        if (!agentWindows.has(id)) browser.windows.update(id, { titlePreface: '' }).catch(() => {});
       }
     }).catch(() => {});
   }
@@ -274,6 +274,7 @@ function connectToMCPServer() {
       updateBadge();
       clearAllMonitors('the connection to the server dropped');
       giveTabsBackOf(socket);
+      agentWindowOf.delete(socket);
       releaseAgentTabsOf(socket);
       scheduleReconnect();
     };
@@ -343,6 +344,7 @@ function connectExtraServer(port) {
       if (extraSockets.get(port) === socket) extraSockets.delete(port);
       updateBadge();
       giveTabsBackOf(socket);
+      agentWindowOf.delete(socket);
       releaseAgentTabsOf(socket);
       settled();
     };
@@ -855,7 +857,7 @@ async function handleTabsAction(id, action, data) {
         }
         
         const inAgentWindow = !data.windowId && !settings.followAgent && !settings.agentProfile;
-        const newTab = inAgentWindow ? await tabInAgentWindow(createTabOptions) : await browser.tabs.create(createTabOptions);
+        const newTab = inAgentWindow ? await tabInAgentWindow(createTabOptions, replySockets.get(id)) : await browser.tabs.create(createTabOptions);
         const call = agentCalls.get(id);
         markAgentActive(newTab.id, {
           state: 'waiting', label: AGENT_ACTIVITY['tabs.create'][1],
@@ -863,7 +865,7 @@ async function handleTabsAction(id, action, data) {
         });
         // After marking it, for the listeners that clear the mark to see it
         const createdTab = inAgentWindow ? await untilAddressChanged(newTab, createTabOptions.url) : newTab;
-        sendResponse(id, action, { tab: createdTab, agentWindow: createdTab.windowId === agentWindowId });
+        sendResponse(id, action, { tab: createdTab, agentWindow: agentWindows.has(createdTab.windowId) });
         break;
 
       case 'tabs.close':
@@ -883,7 +885,7 @@ async function handleTabsAction(id, action, data) {
         await browser.tabs.update(data.tabId, { active: true });
         // Asked for by name: the person is meant to see it, even in the agent's window
         const switched = await browser.tabs.get(data.tabId);
-        if (switched.windowId === agentWindowId) await browser.windows.update(agentWindowId, { state: 'normal', focused: true });
+        if (agentWindows.has(switched.windowId)) await browser.windows.update(switched.windowId, { state: 'normal', focused: true });
         sendResponse(id, action, { success: true });
         break;
 
@@ -1187,33 +1189,53 @@ async function navigated(tabId, go) {
 // agent works in" off, the agent's own tabs live in a window of their own, where
 // showing one takes nothing away from the person. A tab it is told to use in
 // their window is shown just for the action, then theirs comes back.
-let agentWindowId = null;
+//
+// Each server gets a window of its own. In a shared one, two sessions take turns
+// showing their tab, and each hides the other's page in the middle of its work.
+const agentWindows = new Map();  // window id -> the prefix in its title
+const agentWindowOf = new Map();  // server's socket -> its window id
 const shownInsteadOf = new Map();  // agent tab -> { previous: the person's tab, token: the action, socket: its server }
 let agentWindowTurn = Promise.resolve();
 const prefacedWindows = new Set();
 
-// The title's prefix tells the server, and the person, which window this is. It
-// also means a page's title alone can never match it to one of theirs.
-const AGENT_WINDOW_PREFACE = '[Agent] ';
 const AGENT_TAB_ADDRESS_MS = 5000;
 const AGENT_TAB_ADDRESS_POLL_MS = 50;
 
-async function currentAgentWindow() {
-  if (agentWindowId === null) {
-    // Kept over a reload of the add-on, which clears session storage: tabs of a
-    // window it lost track of would be looked for by their bare page title.
-    // Window ids restart with Firefox, so the id only counts with the title:
-    // it could be one of the person's windows now.
-    const stored = await browser.storage.local.get({ agentWindowId: null }).catch(() => ({}));
-    const window = stored.agentWindowId != null && await browser.windows.get(stored.agentWindowId).catch(() => null);
-    if (window && (window.title || '').startsWith(AGENT_WINDOW_PREFACE)) agentWindowId = stored.agentWindowId;
-  }
-  return agentWindowId !== null && await browser.windows.get(agentWindowId).catch(() => null);
+// The title's prefix tells the server, and the person, which window this is, so
+// a page's title alone can never match it to one of theirs, to another session's,
+// or to one in another profile
+async function agentWindowPreface(number = 1) {
+  const { instance_id: profile } = await browserIdentity();
+  return `[Agent ${profile.slice(0, 4)}${number > 1 ? `.${number}` : ''}] `;
 }
 
+// Kept over a reload of the add-on, which clears session storage: tabs of a window
+// it lost track of would be looked for by their bare page title. Window ids restart
+// with Firefox, so an id only counts with its title: it could be the person's now.
+let agentWindowsLoaded = null;
+
+function loadAgentWindows() {
+  agentWindowsLoaded ||= (async () => {
+    const stored = await browser.storage.local.get({ agentWindows: {} }).catch(() => ({ agentWindows: {} }));
+    for (const [id, preface] of Object.entries(stored.agentWindows)) {
+      const window = await browser.windows.get(Number(id)).catch(() => null);
+      if (window && (window.title || '').startsWith(preface)) agentWindows.set(Number(id), preface);
+    }
+  })();
+  return agentWindowsLoaded;
+}
+
+function saveAgentWindows() {
+  return browser.storage.local.set({ agentWindows: Object.fromEntries(agentWindows) }).catch(() => {});
+}
+
+browser.windows.onRemoved.addListener(id => {
+  if (agentWindows.delete(id)) saveAgentWindows();
+});
+
 // One at a time, or two tabs opening at once would make two windows
-function tabInAgentWindow(options) {
-  const opened = agentWindowTurn.then(() => openTabInAgentWindow(options));
+function tabInAgentWindow(options, socket) {
+  const opened = agentWindowTurn.then(() => openTabInAgentWindow(options, socket));
   agentWindowTurn = opened.catch(() => {});
   return opened;
 }
@@ -1233,18 +1255,31 @@ async function untilAddressChanged(tab, url) {
   return tab;
 }
 
-async function openTabInAgentWindow(options) {
-  if (await currentAgentWindow()) {
-    // Not active: another client may be mid-action in the tab showing there, and
-    // the action that needs this one brings it up
-    return browser.tabs.create({ ...options, active: false, windowId: agentWindowId });
+async function openTabInAgentWindow(options, socket) {
+  await loadAgentWindows();
+  let windowId = agentWindowOf.get(socket);
+  if (!agentWindows.has(windowId)) {
+    // Left by a server that has gone, so a restarted session has no new window each time
+    const taken = new Set(agentWindowOf.values());
+    windowId = [...agentWindows.keys()].find(id => !taken.has(id));
   }
+  if (windowId !== undefined) {
+    agentWindowOf.set(socket, windowId);
+    // Not active: this server may be mid-action in the tab showing there, and the
+    // action that needs this one brings it up
+    return browser.tabs.create({ ...options, active: false, windowId });
+  }
+  const prefaces = new Set(agentWindows.values());
+  let number = 1;
+  while (prefaces.has(await agentWindowPreface(number))) number++;
+  const titlePreface = await agentWindowPreface(number);
   // Minimised, because Firefox gives a new window the foreground whatever
   // focused says, and on the person's screen that is what this exists to avoid.
   // The server brings it back behind everything when it needs to aim a click.
-  const created = await browser.windows.create({ url: options.url, state: 'minimized', titlePreface: AGENT_WINDOW_PREFACE });
-  agentWindowId = created.id;
-  await browser.storage.local.set({ agentWindowId }).catch(() => {});
+  const created = await browser.windows.create({ url: options.url, state: 'minimized', titlePreface });
+  agentWindows.set(created.id, titlePreface);
+  agentWindowOf.set(socket, created.id);
+  await saveAgentWindows();
   const [tab] = created.tabs;
   return options.pinned ? browser.tabs.update(tab.id, { pinned: true }) : tab;
 }
@@ -1252,16 +1287,19 @@ async function openTabInAgentWindow(options) {
 async function showForRealInput(data, socket) {
   const tab = await browser.tabs.get(data.tabId);
   data.windowId = tab.windowId;
-  const ownWindow = Boolean(await currentAgentWindow()) && tab.windowId === agentWindowId;
+  await loadAgentWindows();
+  const ownWindow = agentWindows.has(tab.windowId);
   data.agentWindow = ownWindow;
   data.ownWindow = ownWindow;
+  data.windowPreface = agentWindows.get(tab.windowId);
   // A profile set aside for agents has no agent window, but the same title as a
   // window of the person's in their own Firefox must not pass for this one. The
   // person can still be in it, logging in to a site, so its tabs are not free to show.
   if (settings.agentProfile) {
     data.agentWindow = true;
+    data.windowPreface = await agentWindowPreface();
     if (!prefacedWindows.has(tab.windowId)) {
-      await browser.windows.update(tab.windowId, { titlePreface: AGENT_WINDOW_PREFACE });
+      await browser.windows.update(tab.windowId, { titlePreface: data.windowPreface });
       prefacedWindows.add(tab.windowId);
     }
   }
@@ -1544,6 +1582,7 @@ async function handleContentAction(id, action, data) {
         const pageResult = await sendMessageWithRetry(data.tabId, { action: pageAction, data });
         if (data.agentWindow && pageResult) pageResult.agentWindow = true;
         if (data.ownWindow && pageResult) pageResult.ownWindow = true;
+        if (data.windowPreface && pageResult) pageResult.windowPreface = data.windowPreface;
         if (data.activate && pageResult) pageResult.windowId = data.windowId;
         if (pageResult && pageResult.error) {
           sendError(id, 'PAGE_ERROR', pageResult.error);

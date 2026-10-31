@@ -482,6 +482,27 @@ async def test_a_prefix_of_a_title_does_not_pick_the_window(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_two_sessions_windows_on_the_same_page_are_told_apart(monkeypatch):
+    monkeypatch.setattr(win_input, 'firefox_windows', lambda minimised=False: [11, 22])
+    monkeypatch.setattr(win_input, 'window_contains', lambda hwnd, x, y: True)
+    monkeypatch.setattr(win_input, 'window_title', lambda hwnd: {11: '[Agent ab12] Page - Firefox', 22: '[Agent ab12.2] Page - Firefox'}[hwnd])
+    monkeypatch.setattr(win_input.user32, 'GetWindowThreadProcessId', lambda hwnd, _: 1, raising=False)
+    async with WindowInput({**PREP, 'agentWindow': True, 'windowPreface': '[Agent ab12.2] '}) as window:
+        assert window.hwnd == 22
+
+
+@pytest.mark.asyncio
+async def test_another_browser_does_not_wait_for_this_ones_turn(monkeypatch):
+    monkeypatch.setattr(win_input, 'MACHINE_TURN_WAIT_S', 0)
+    async with win_input.machine_turn('one'):
+        async with win_input.machine_turn('two'):
+            pass
+        with pytest.raises(WindowInputUnavailable):
+            async with win_input.machine_turn('one'):
+                pass
+
+
+@pytest.mark.asyncio
 async def test_the_machine_turn_is_one_at_a_time(monkeypatch):
     monkeypatch.setattr(win_input, 'MACHINE_TURN_WAIT_S', 0)
     async with win_input.machine_turn():

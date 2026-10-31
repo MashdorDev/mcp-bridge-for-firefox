@@ -12,6 +12,8 @@ To clean a profile that already has them, close that Firefox and run `python scr
 
 Firefox has one active window per process, so while you use a Firefox window, real keys for another window of the same Firefox have to wait for you to pause and briefly borrow its activation. While it borrows, about 0.4 s for a short text, the agent's window holds the Windows foreground from underneath yours: your title bar dims and your page sees a blur and a focus. A second profile runs as its own process and has neither problem.
 
+Each session gets an agent window of its own, titled `[Agent ab12]`, `[Agent ab12.2]` and so on, so sessions don't hide each other's pages. Firefox still has one active window per process, so one session typing takes activation from another's window in the same Firefox, and a menu left open there can close. Sessions that must not touch each other at all each need their own profile.
+
 1. Create it: `firefox.exe -CreateProfile Agents`
 2. Start it alongside your own: `firefox.exe -P Agents --no-remote`
 3. Install the add-on there, and in its settings tick **This Firefox is for agents**.
