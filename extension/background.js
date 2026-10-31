@@ -854,15 +854,16 @@ async function handleTabsAction(id, action, data) {
           createTabOptions.pinned = data.pinned;
         }
         
-        const newTab = !data.windowId && !settings.followAgent && !settings.agentProfile
-          ? await tabInAgentWindow(createTabOptions)
-          : await browser.tabs.create(createTabOptions);
+        const inAgentWindow = !data.windowId && !settings.followAgent && !settings.agentProfile;
+        const newTab = inAgentWindow ? await tabInAgentWindow(createTabOptions) : await browser.tabs.create(createTabOptions);
         const call = agentCalls.get(id);
         markAgentActive(newTab.id, {
           state: 'waiting', label: AGENT_ACTIVITY['tabs.create'][1],
           agentStatus: call && call.status, socket: call && call.socket
         });
-        sendResponse(id, action, { tab: newTab, agentWindow: newTab.windowId === agentWindowId });
+        // After marking it, for the listeners that clear the mark to see it
+        const createdTab = inAgentWindow ? await untilAddressChanged(newTab, createTabOptions.url) : newTab;
+        sendResponse(id, action, { tab: createdTab, agentWindow: createdTab.windowId === agentWindowId });
         break;
 
       case 'tabs.close':
@@ -1205,10 +1206,10 @@ async function currentAgentWindow() {
 }
 
 // One at a time, or two tabs opening at once would make two windows
-async function tabInAgentWindow(options) {
+function tabInAgentWindow(options) {
   const opened = agentWindowTurn.then(() => openTabInAgentWindow(options));
   agentWindowTurn = opened.catch(() => {});
-  return untilAddressChanged(await opened, options.url);
+  return opened;
 }
 
 // A tab in a minimised window stays on about:blank until the page answers, and
@@ -1218,7 +1219,10 @@ async function untilAddressChanged(tab, url) {
   const deadline = Date.now() + AGENT_TAB_ADDRESS_MS;
   while (tab.url === 'about:blank' && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, AGENT_TAB_ADDRESS_POLL_MS));
-    tab = await browser.tabs.get(tab.id).catch(() => tab);
+    const now = await browser.tabs.get(tab.id).catch(() => null);
+    // Closed, as a download's tab is
+    if (!now) return tab;
+    tab = now;
   }
   return tab;
 }
