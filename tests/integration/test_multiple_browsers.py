@@ -111,6 +111,36 @@ async def test_an_agent_profile_is_preferred_until_one_is_chosen(server):
 
 
 @pytest.mark.asyncio
+async def test_ticking_agent_profile_on_a_connected_browser_takes_over(server):
+    async with connect_as_extension(uri(server)) as main, connect_as_extension(uri(server)) as agent:
+        await hello(main, "aaaa1111", "Main")
+        await hello(agent, "bbbb2222", "Agents")
+        assert server.active_browser == "aaaa1111"
+        await hello(agent, "bbbb2222", "Agents", agent_profile=True)
+        assert server.active_browser == "bbbb2222"
+
+
+@pytest.mark.asyncio
+async def test_an_agent_profile_does_not_pull_work_out_of_a_browser_in_use(server):
+    # Tab ids mean nothing in another profile
+    async with connect_as_extension(uri(server)) as main, connect_as_extension(uri(server)) as agent:
+        await hello(main, "aaaa1111", "Main")
+        server.note_agent_tab(None, 12)
+        await hello(agent, "bbbb2222", "Agents", agent_profile=True)
+        assert server.active_browser == "aaaa1111"
+
+
+@pytest.mark.asyncio
+async def test_two_agent_profiles_do_not_trade_places(server):
+    async with connect_as_extension(uri(server)) as one, connect_as_extension(uri(server)) as two:
+        await hello(one, "aaaa1111", "One", agent_profile=True)
+        await hello(two, "bbbb2222", "Two", agent_profile=True)
+        assert server.active_browser == "aaaa1111"
+        await hello(two, "bbbb2222", "Two", agent_profile=True)
+        assert server.active_browser == "aaaa1111"
+
+
+@pytest.mark.asyncio
 async def test_an_unknown_name_is_refused_with_the_choices(server):
     async with connect_as_extension(uri(server)) as main:
         await hello(main, "aaaa1111", "Main")

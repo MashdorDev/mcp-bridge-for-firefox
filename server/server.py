@@ -448,6 +448,7 @@ class FoxMCPServer:
             browser.name = 'Thunderbird ' + browser.name[len('Firefox '):]
 
         if not instance_id or instance_id == browser.key:
+            self._prefer_agent_profile(browser)
             return
 
         old = self.browsers.get(instance_id)
@@ -461,13 +462,21 @@ class FoxMCPServer:
             if key == browser.key:
                 self.monitor_browsers[monitor_id] = instance_id
         browser.key = instance_id
-        # A profile set aside for agents is where they act, unless one was chosen by name
-        preferred = browser.agent_profile and not self.browser_chosen
-        if was_active or preferred or (self.active_browser not in self.browsers and self._may_take_over()):
+        if was_active or (self.active_browser not in self.browsers and self._may_take_over()):
             self.active_browser = instance_id
+        self._prefer_agent_profile(browser)
         if self.active_browser == instance_id:
             self.active_browser_name = browser.name
         logger.info(f"Browser {browser.name} ({instance_id[:8]}) said hello, add-on {browser.version}")
+
+    def _prefer_agent_profile(self, browser: BrowserConnection):
+        """A profile set aside for agents is where they act, unless one was chosen
+        by name or work has begun elsewhere: tab ids mean nothing in another profile"""
+        active = self.browsers.get(self.active_browser)
+        if (browser.agent_profile and browser.key and not self.browser_chosen and active is not browser
+                and (active is None or (active.last_tab is None and not active.agent_profile))):
+            self.active_browser = browser.key
+            self.active_browser_name = browser.name
 
     def _answer_pairing(self, websocket, data: Dict[str, Any]):
         """Prove the token to an add-on that sent a nonce, and ask it to prove it back
@@ -670,7 +679,9 @@ class FoxMCPServer:
 
     async def send_to_extension(self, message: Dict[str, Any]) -> bool:
         """Send message to browser extension"""
-        target = self._socket_for(message)
+        # An action's own browser, when others may have become active since
+        pinned = self.browsers.get(message.pop('to_browser', None))
+        target = pinned.websocket if pinned else self._socket_for(message)
         if not target:
             logger.warning("No extension connection available")
             return False

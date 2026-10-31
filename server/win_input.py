@@ -24,15 +24,19 @@ Licensed under the MIT License - see LICENSE file for details
 
 import asyncio
 import atexit
+import os
 import re
 import sys
+import tempfile
 import time
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 AVAILABLE = sys.platform == 'win32'
 
 if AVAILABLE:
     import ctypes
+    import msvcrt
     from ctypes import wintypes
 
     user32 = ctypes.WinDLL('user32', use_last_error=True)
@@ -83,6 +87,9 @@ EXTENDED_KEYS = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E, VK_
 STEP_S = 0.03
 MODIFIER_HOLD_S = 0.15
 CHARS_PER_BATCH = 40
+# In a window the person may be looking at: whoever switches its tab mid-text
+# catches what was already posted, so no more than this can reach their tab
+CHARS_PER_BATCH_THEIRS = 10
 # A drag, as in bidi.py: the move, its steps, and the hold at each end
 DRAG_S = 0.6
 DRAG_STEPS = 20
@@ -160,9 +167,15 @@ IDLE_BEFORE_SWAP_S = 2.0
 IDLE_WAIT_MAX_S = 10.0
 IDLE_POLL_S = 0.25
 SWAP_SETTLE_S = 0.05
+SWAP_SETTLE_STEPS = 5
 AGENT_WINDOW_PREFACE = '[Agent] '
+# One action at a time across every server on this computer: how long to wait
+MACHINE_TURN_WAIT_S = 30.0
+MACHINE_TURN_POLL_S = 0.05
 # Background windows made active, and the timer that steps each one down
 activated: Dict[int, asyncio.TimerHandle] = {}
+# Windows holding activation borrowed from the person's, and that window
+on_loan: Dict[int, int] = {}
 
 
 def seconds_idle() -> float:
@@ -178,7 +191,62 @@ def same_firefox(one: int, other: int) -> bool:
     pids = [wintypes.DWORD(), wintypes.DWORD()]
     user32.GetWindowThreadProcessId(one, ctypes.byref(pids[0]))
     user32.GetWindowThreadProcessId(other, ctypes.byref(pids[1]))
-    return pids[0].value == pids[1].value
+    # No foreground window at all, for a moment while it changes, is nobody's
+    return pids[0].value == pids[1].value != 0
+
+
+async def wait_for_idle(waited: float = 0.0) -> float:
+    """Until the person pauses, from a budget per action: someone tapping a key
+    every few seconds must not keep an action going for minutes. Says how much
+    of it has gone."""
+    while seconds_idle() < IDLE_BEFORE_SWAP_S:
+        if waited >= IDLE_WAIT_MAX_S:
+            raise WindowInputUnavailable('the person is using this Firefox, where keys for another window or tab '
+                                         f'would reach them, and did not pause for {IDLE_WAIT_MAX_S:.0f} s')
+        await asyncio.sleep(IDLE_POLL_S)
+        waited += IDLE_POLL_S
+    return waited
+
+
+async def wait_to_change_tabs():
+    """Showing a tab takes away the one the person may be typing in"""
+    if user32.GetForegroundWindow() in firefox_windows():
+        await wait_for_idle()
+
+
+@asynccontextmanager
+async def machine_turn():
+    """Activation belongs to a Firefox, and one add-on serves several servers: one
+    giving a window back mid-way through another's text would send the rest to
+    the person. The operating system drops the lock if its holder dies."""
+    if not AVAILABLE:
+        yield
+        return
+    with open(os.path.join(tempfile.gettempdir(), 'mcp-bridge-real-input.lock'), 'a+b') as lock:
+        deadline = time.monotonic() + MACHINE_TURN_WAIT_S
+        while True:
+            try:
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise WindowInputUnavailable(f'another agent has been using real input for {MACHINE_TURN_WAIT_S:.0f} s') from None
+                await asyncio.sleep(MACHINE_TURN_POLL_S)
+        try:
+            yield
+        finally:
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def hand_back(hwnd: int, theirs: int):
+    foreground = user32.GetForegroundWindow()
+    user32.PostMessageW(hwnd, WM_ACTIVATE, WA_INACTIVE, 0)
+    # The borrowing window holds the foreground because Firefox raised it. Anywhere
+    # else, Windows has told Firefox already, and theirs must not read as active
+    if foreground in (hwnd, theirs):
+        user32.PostMessageW(theirs, WM_ACTIVATE, WA_ACTIVE, 0)
 
 
 def step_down(hwnd: int):
@@ -193,6 +261,9 @@ def step_all_down():
     for hwnd, timer in list(activated.items()):
         timer.cancel()
         step_down(hwnd)
+    for hwnd, theirs in list(on_loan.items()):
+        del on_loan[hwnd]
+        hand_back(hwnd, theirs)
 
 
 if AVAILABLE:
@@ -233,7 +304,7 @@ class WindowInput:
     the tools hand either one the same steps.
     """
 
-    def __init__(self, prep: Dict[str, Any]):
+    def __init__(self, prep: Dict[str, Any], still_showing=None):
         if not AVAILABLE:
             raise WindowInputUnavailable('Window input works on Windows only')
         screen = prep.get('screen')
@@ -257,6 +328,10 @@ class WindowInput:
         self.made_active = False
         self.lent_by = 0
         self.lent_at = 0.0
+        self.idle_waited = 0.0
+        self.input_sent = False
+        # Asks the add-on whether the tab is still the one in this window
+        self.still_showing = still_showing
 
     async def __aenter__(self):
         x, y = self.screen_point(0, 0)
@@ -273,7 +348,14 @@ class WindowInput:
         # the same spot (another profile, the person's own) must never get
         # the agent's clicks and keys
         if self.title:
-            windows = [hwnd for hwnd in windows if window_title(hwnd).startswith(self.title)]
+            windows = [hwnd for hwnd in windows if shows_page(window_title(hwnd), self.title)]
+        else:
+            # A page with no title yet says nothing, so it takes the spot being
+            # beyond doubt
+            if self.agent_window:
+                windows = [hwnd for hwnd in windows if window_title(hwnd).startswith(AGENT_WINDOW_PREFACE)]
+            if len(windows) > 1:
+                raise WindowNotShowing('the page has no title to tell its Firefox window from the others there')
         hwnd = (windows or [0])[0]
         if not hwnd:
             raise WindowNotShowing("the tab's Firefox window was not found (minimised?)")
@@ -281,62 +363,92 @@ class WindowInput:
         self.thread = user32.GetWindowThreadProcessId(hwnd, None)
         return self
 
-    async def __aexit__(self, *exc):
+    async def __aexit__(self, exc_type, exc, tb):
         self.release()
         if self.lent_by:
             self.give_back()
         elif self.made_active:
             activated[self.hwnd] = asyncio.get_running_loop().call_later(ACTIVE_FOR_S, step_down, self.hwnd)
+        # Falling back from here would do it all again on top of what went in
+        if isinstance(exc, WindowInputUnavailable) and self.input_sent:
+            raise RuntimeError(f'Stopped after part of the input went in, because {exc}. '
+                               'Check the page before doing it again') from exc
 
     async def make_active(self):
-        """Let this window take keys, once per action. Posted every time rather
-        than remembered: leaving Firefox after using it, or a detach from its
-        input queue, makes it inactive again with nothing here to see that."""
-        if self.made_active:
-            return
+        """Let this window take keys, checked again before every key and batch of
+        text: a key posted here lands in whichever window of this Firefox is
+        active, and the person can change window or tab at any moment. Posted
+        once per action rather than remembered: leaving Firefox after using it,
+        or a detach from its input queue, makes it inactive again with nothing
+        here to see that."""
+        await self.check_showing()
         foreground = user32.GetForegroundWindow()
+        if self.lent_by and foreground in (self.hwnd, self.lent_by):
+            if seconds_idle() > time.monotonic() - self.lent_at:
+                self.stay_under(self.lent_by)
+                return
+            foreground = self.lent_by
+        if same_firefox(foreground, self.hwnd) and foreground != self.hwnd:
+            # They came back, or moved to another window: theirs until they pause
+            if self.lent_by:
+                self.give_back()
+            self.idle_waited = await wait_for_idle(self.idle_waited)
+            await self.check_showing()
+            foreground = user32.GetForegroundWindow()
         if foreground == self.hwnd:
-            return
-        if same_firefox(foreground, self.hwnd):
+            self.end_loan()
+        elif same_firefox(foreground, self.hwnd):
             await self.borrow_activation(foreground)
-            return
-        self.made_active = True
-        pending = activated.pop(self.hwnd, None)
-        if pending:
-            pending.cancel()
-        self.post(WM_ACTIVATE, WA_ACTIVE, 0)
-        await asyncio.sleep(ACTIVATE_SETTLE_S)
+        else:
+            # Another program is in front, so what was borrowed needs no returning
+            self.end_loan()
+            if not self.made_active:
+                self.made_active = True
+                pending = activated.pop(self.hwnd, None)
+                if pending:
+                    pending.cancel()
+                self.post(WM_ACTIVATE, WA_ACTIVE, 0)
+                await asyncio.sleep(ACTIVATE_SETTLE_S)
 
     async def borrow_activation(self, theirs: int):
         """The person is in another window of this Firefox, which has one active
         window per process, and keys posted anywhere else land in theirs. So this
         window borrows it for the action, only while they aren't using the
-        computer: a key they press during the swap would land here instead."""
-        waited = 0.0
-        while seconds_idle() < IDLE_BEFORE_SWAP_S:
-            if waited >= IDLE_WAIT_MAX_S:
-                raise WindowInputUnavailable('the person is using another window of this Firefox, which is the '
-                                             f'only one that can take keys, and did not pause for {IDLE_WAIT_MAX_S:.0f} s')
-            await asyncio.sleep(IDLE_POLL_S)
-            waited += IDLE_POLL_S
+        computer: a key they press during the swap would land here instead. Firefox
+        also raises a window it activates while it holds the foreground, and so
+        this one holds the foreground for the action."""
         self.lent_by = theirs
+        on_loan[self.hwnd] = theirs
         self.lent_at = time.monotonic()
         self.made_active = True
         user32.PostMessageW(theirs, WM_ACTIVATE, WA_INACTIVE, 0)
         self.post(WM_ACTIVATE, WA_ACTIVE, 0)
-        await asyncio.sleep(SWAP_SETTLE_S)
+        # In steps, as Firefox raises it within this time and it should not show
+        for _ in range(SWAP_SETTLE_STEPS):
+            await asyncio.sleep(SWAP_SETTLE_S / SWAP_SETTLE_STEPS)
+            self.stay_under(theirs)
 
-    def give_back(self):
-        user32.PostMessageW(self.hwnd, WM_ACTIVATE, WA_INACTIVE, 0)
-        user32.PostMessageW(self.lent_by, WM_ACTIVATE, WA_ACTIVE, 0)
+    def stay_under(self, theirs: int):
+        """What the person sees stays their window, whichever one Firefox raised"""
+        user32.SetWindowPos(self.hwnd, theirs, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+
+    def end_loan(self):
+        on_loan.pop(self.hwnd, None)
         self.lent_by = 0
 
-    async def keep_clear_of_the_person(self):
-        """They came back mid-typing: hand activation back until they pause"""
-        if self.lent_by and seconds_idle() <= time.monotonic() - self.lent_at:
-            theirs = self.lent_by
-            self.give_back()
-            await self.borrow_activation(theirs)
+    def give_back(self):
+        hand_back(self.hwnd, self.lent_by)
+        self.end_loan()
+
+    async def check_showing(self):
+        if self.still_showing and not await self.still_showing():
+            raise WindowInputUnavailable('its tab stopped showing in the window, or the agent was paused')
+
+    async def wait_if_person_shares_firefox(self):
+        """Held keys and buttons apply to all of this Firefox's input, the
+        person's included: their "w" under a held Control closes a tab"""
+        if same_firefox(user32.GetForegroundWindow(), self.hwnd):
+            self.idle_waited = await wait_for_idle(self.idle_waited)
 
     # Positions
 
@@ -369,6 +481,8 @@ class WindowInput:
     def post(self, message: int, wparam: int, lparam: int):
         if not user32.PostMessageW(self.hwnd, message, wparam, lparam):
             raise RuntimeError(f'Firefox did not take the input (error {ctypes.get_last_error()})')
+        if message not in (WM_ACTIVATE, WM_MOUSEMOVE):
+            self.input_sent = True
 
     def hold(self, keys: List[int]):
         """Make Firefox's input thread see exactly these keys and buttons held,
@@ -410,6 +524,7 @@ class WindowInput:
         await asyncio.sleep(STEP_S / 3)
 
     async def click_at(self, context, x: float, y: float, button: int = 0, clicks: int = 1):
+        await self.check_showing()
         await self.move(x, y)
         cx, cy = self.client_point(x, y)
         down, up, flag, vk = ((WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON, VK_RBUTTON) if button == 2
@@ -432,6 +547,8 @@ class WindowInput:
         down, up, flag, vk = {1: (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON, VK_MBUTTON),
                               2: (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON, VK_RBUTTON)}.get(
                                   button, (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON, VK_LBUTTON))
+        await self.wait_if_person_shares_firefox()
+        await self.check_showing()
         await self.move(start['x'], start['y'])
         self.buttons = flag
         self.hold([vk])
@@ -456,7 +573,6 @@ class WindowInput:
 
     async def press(self, context, combo: str):
         """A key, or a combination such as "Control+a" or "Shift+Tab" """
-        await self.make_active()
         names = [part for part in combo.split('+') if part] if len(combo) > 1 else [combo]
         *modifier_names, key = names
         modifiers = []
@@ -486,6 +602,9 @@ class WindowInput:
             raise ValueError(f'Unknown key "{key}"')
         alt = VK_MENU in modifiers
         if modifiers:
+            await self.wait_if_person_shares_firefox()
+        await self.make_active()
+        if modifiers:
             self.hold(modifiers)
         try:
             # Only key downs and ups: Windows makes the WM_CHAR for Enter, Tab
@@ -505,15 +624,19 @@ class WindowInput:
         finally:
             self.release()
 
-    async def type_text(self, context, text: str):
+    def check_text(self, text: str):
         # Firefox drops characters outside the Basic Multilingual Plane (emoji)
         # that arrive as window messages, however they are sent, so such text
         # goes through another way before any of it is typed
         if any(ord(char) > 0xFFFF for char in text):
             raise WindowInputUnavailable('Emoji cannot be typed through window messages')
+
+    async def type_text(self, context, text: str):
+        self.check_text(text)
         await self.make_active()
         # A line break goes in as Shift+Enter, as in bidi.py: a plain Enter
         # sends the message in chat boxes
+        batch = CHARS_PER_BATCH if self.agent_window else CHARS_PER_BATCH_THEIRS
         sent = 0
         for char in text:
             if char == '\n':
@@ -521,8 +644,8 @@ class WindowInput:
                 continue
             self.post(WM_CHAR, ord(char), 1)
             sent += 1
-            if sent % CHARS_PER_BATCH == 0:
-                await self.keep_clear_of_the_person()
+            if sent % batch == 0:
+                await self.make_active()
                 await asyncio.sleep(STEP_S)
         await asyncio.sleep(STEP_S)
 

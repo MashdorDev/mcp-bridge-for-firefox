@@ -264,7 +264,7 @@ function connectToMCPServer() {
       isConnected = false;
       updateBadge();
       clearAllMonitors('the connection to the server dropped');
-      giveAllTabsBack();
+      giveTabsBackOf(socket);
       releaseAgentTabsOf(socket);
       scheduleReconnect();
     };
@@ -333,6 +333,7 @@ function connectExtraServer(port) {
       }
       if (extraSockets.get(port) === socket) extraSockets.delete(port);
       updateBadge();
+      giveTabsBackOf(socket);
       releaseAgentTabsOf(socket);
       settled();
     };
@@ -1171,7 +1172,8 @@ async function navigated(tabId, go) {
 // showing one takes nothing away from the person. A tab it is told to use in
 // their window is shown just for the action, then theirs comes back.
 let agentWindowId = null;
-const shownInsteadOf = new Map();  // agent tab -> { previous: the person's tab, token: the action }
+const shownInsteadOf = new Map();  // agent tab -> { previous: the person's tab, token: the action, socket: its server }
+let agentWindowTurn = Promise.resolve();
 
 // The title's prefix tells the server, and the person, which window this is. It
 // also means a page's title alone can never match it to one of theirs.
@@ -1179,14 +1181,27 @@ const AGENT_WINDOW_PREFACE = '[Agent] ';
 
 async function currentAgentWindow() {
   if (agentWindowId === null) {
-    // Kept for the session, so reloading the add-on doesn't orphan the window
-    const stored = await browser.storage.session.get({ agentWindowId: null }).catch(() => ({}));
+    // Kept over a reload of the add-on, which clears session storage: tabs of a
+    // window it lost track of would be looked for by their bare page title.
+    // Window ids mean nothing after a restart, so that clears it.
+    const stored = await browser.storage.local.get({ agentWindowId: null }).catch(() => ({}));
     agentWindowId = stored.agentWindowId ?? null;
   }
   return agentWindowId !== null && await browser.windows.get(agentWindowId).catch(() => null);
 }
 
-async function tabInAgentWindow(options) {
+browser.runtime.onStartup.addListener(() => {
+  browser.storage.local.remove('agentWindowId').catch(() => {});
+});
+
+// One at a time, or two tabs opening at once would make two windows
+function tabInAgentWindow(options) {
+  const opened = agentWindowTurn.then(() => openTabInAgentWindow(options));
+  agentWindowTurn = opened.catch(() => {});
+  return opened;
+}
+
+async function openTabInAgentWindow(options) {
   if (await currentAgentWindow()) {
     // Not active: another client may be mid-action in the tab showing there, and
     // the action that needs this one brings it up
@@ -1197,24 +1212,35 @@ async function tabInAgentWindow(options) {
   // The server brings it back behind everything when it needs to aim a click.
   const created = await browser.windows.create({ url: options.url, state: 'minimized', titlePreface: AGENT_WINDOW_PREFACE });
   agentWindowId = created.id;
-  await browser.storage.session.set({ agentWindowId }).catch(() => {});
+  await browser.storage.local.set({ agentWindowId }).catch(() => {});
   const [tab] = created.tabs;
   return options.pinned ? browser.tabs.update(tab.id, { pinned: true }) : tab;
 }
 
-async function showForRealInput(data) {
+async function showForRealInput(data, socket) {
   const tab = await browser.tabs.get(data.tabId);
+  data.windowId = tab.windowId;
   data.agentWindow = Boolean(await currentAgentWindow()) && tab.windowId === agentWindowId;
   let entry = shownInsteadOf.get(data.tabId);
-  // Left by an action that never finished: not to be applied to this one
+  // Left by an action that never finished. Still showing, it still owes the
+  // person their tab; if they have since moved on, it owes nothing.
   if (entry && entry.token !== data.token) {
-    shownInsteadOf.delete(data.tabId);
-    entry = null;
+    entry = tab.active ? { ...entry, token: data.token, socket } : null;
+    if (entry) shownInsteadOf.set(data.tabId, entry);
+    else shownInsteadOf.delete(data.tabId);
   }
   if (!tab.active && !settings.followAgent && !data.agentWindow) {
+    // The server waits for the person to pause first, and asks again
+    if (!data.showNow) {
+      data.needsShow = true;
+      return;
+    }
     const [shown] = await browser.tabs.query({ active: true, windowId: tab.windowId });
     if (shown) {
-      entry = { previous: shown.id, token: data.token };
+      // What shows may be another agent's tab left behind: theirs is the one before it
+      const left = shownInsteadOf.get(shown.id);
+      if (left) shownInsteadOf.delete(shown.id);
+      entry = { previous: left ? left.previous : shown.id, token: data.token, socket };
       shownInsteadOf.set(data.tabId, entry);
     }
   }
@@ -1235,6 +1261,13 @@ async function giveTabBack(tabId) {
 // When an action can't finish, the person still gets their tab back
 function giveAllTabsBack() {
   for (const tabId of [...shownInsteadOf.keys()]) giveTabBack(tabId).catch(() => {});
+}
+
+// Only that server's: another may be mid-action in the tab it is showing
+function giveTabsBackOf(socket) {
+  for (const [tabId, entry] of [...shownInsteadOf]) {
+    if (entry.socket === socket) giveTabBack(tabId).catch(() => {});
+  }
 }
 
 function sendAgentState(tabId) {
@@ -1403,6 +1436,13 @@ async function handleContentAction(id, action, data) {
         sendResponse(id, action, { done: true });
         break;
 
+      // Asked before every key: keys go to whatever tab shows in the window
+      case 'content.real_input_showing': {
+        const tab = await browser.tabs.get(data.tabId).catch(() => null);
+        sendResponse(id, action, { showing: Boolean(tab && tab.active && tab.windowId === data.windowId && !settings.paused) });
+        break;
+      }
+
       case 'content.caret_to_end':
       case 'content.real_input_prep':
       case 'content.real_pointer_prep':
@@ -1424,9 +1464,14 @@ async function handleContentAction(id, action, data) {
           'content.real_input_arrived': 'realInputArrived',
           'content.hover': 'hover', 'content.scroll': 'scroll', 'content.drag': 'drag', 'content.click_effect': 'clickEffect' }[action];
         // Real input posted to the window lands in the tab showing in it
-        if (data.activate) await showForRealInput(data);
+        if (data.activate) await showForRealInput(data, replySockets.get(id));
+        if (data.needsShow) {
+          sendResponse(id, action, { needsShow: true });
+          break;
+        }
         const pageResult = await sendMessageWithRetry(data.tabId, { action: pageAction, data });
         if (data.agentWindow && pageResult) pageResult.agentWindow = true;
+        if (data.activate && pageResult) pageResult.windowId = data.windowId;
         if (pageResult && pageResult.error) {
           sendError(id, 'PAGE_ERROR', pageResult.error);
         } else {
