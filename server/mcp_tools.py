@@ -900,7 +900,8 @@ class FoxMCPTools:
 
             if response.get("type") == "response" and "data" in response:
                 tab = response["data"].get("tab", {})
-                return f"Created tab: ID {tab.get('id')} - {tab.get('title', 'Loading...')} - {tab.get('url', url)}"
+                where = ", in the agent's own window: tabs_switch shows it to the person" if response["data"].get("agentWindow") else ""
+                return f"Created tab: ID {tab.get('id')} - {tab.get('title', 'Loading...')} - {tab.get('url', url)}{where}"
 
             return "Unable to create tab"
 

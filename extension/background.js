@@ -20,6 +20,7 @@ browser.storage.onChanged.addListener((changes, area) => {
   // A paused agent lets go of its tabs, so the person gets the page back
   if (changes.paused && changes.paused.newValue) {
     for (const tabId of [...agentTabs.keys()]) releaseAgentTab(tabId);
+    giveAllTabsBack();
   }
 });
 
@@ -262,6 +263,7 @@ function connectToMCPServer() {
       isConnected = false;
       updateBadge();
       clearAllMonitors('the connection to the server dropped');
+      giveAllTabsBack();
       releaseAgentTabsOf(socket);
       scheduleReconnect();
     };
@@ -849,7 +851,7 @@ async function handleTabsAction(id, action, data) {
           state: 'waiting', label: AGENT_ACTIVITY['tabs.create'][1],
           agentStatus: call && call.status, socket: call && call.socket
         });
-        sendResponse(id, action, { tab: newTab });
+        sendResponse(id, action, { tab: newTab, agentWindow: newTab.windowId === agentWindowId });
         break;
 
       case 'tabs.close':
@@ -867,6 +869,9 @@ async function handleTabsAction(id, action, data) {
 
       case 'tabs.switch':
         await browser.tabs.update(data.tabId, { active: true });
+        // Asked for by name: the person is meant to see it, even in the agent's window
+        const switched = await browser.tabs.get(data.tabId);
+        if (switched.windowId === agentWindowId) await browser.windows.update(agentWindowId, { state: 'normal', focused: true });
         sendResponse(id, action, { success: true });
         break;
 
@@ -1165,37 +1170,70 @@ async function navigated(tabId, go) {
 // showing one takes nothing away from the person. A tab it is told to use in
 // their window is shown just for the action, then theirs comes back.
 let agentWindowId = null;
-const shownInsteadOf = new Map();  // agent tab -> the person's tab it replaced
+const shownInsteadOf = new Map();  // agent tab -> { previous: the person's tab, token: the action }
+
+// The title's prefix tells the server, and the person, which window this is. It
+// also means a page's title alone can never match it to one of theirs.
+const AGENT_WINDOW_PREFACE = '[Agent] ';
+
+async function currentAgentWindow() {
+  if (agentWindowId === null) {
+    // Kept for the session, so reloading the add-on doesn't orphan the window
+    const stored = await browser.storage.session.get({ agentWindowId: null }).catch(() => ({}));
+    agentWindowId = stored.agentWindowId ?? null;
+  }
+  return agentWindowId !== null && await browser.windows.get(agentWindowId).catch(() => null);
+}
 
 async function tabInAgentWindow(options) {
-  const window = agentWindowId && await browser.windows.get(agentWindowId).catch(() => null);
-  if (window) return browser.tabs.create({ ...options, active: true, windowId: agentWindowId });
+  if (await currentAgentWindow()) {
+    // Not active: another client may be mid-action in the tab showing there, and
+    // the action that needs this one brings it up
+    return browser.tabs.create({ ...options, active: false, windowId: agentWindowId });
+  }
   // Minimised, because Firefox gives a new window the foreground whatever
   // focused says, and on the person's screen that is what this exists to avoid.
   // The server brings it back behind everything when it needs to aim a click.
-  const created = await browser.windows.create({ url: options.url, state: 'minimized' });
+  const created = await browser.windows.create({ url: options.url, state: 'minimized', titlePreface: AGENT_WINDOW_PREFACE });
   agentWindowId = created.id;
-  return created.tabs[0];
+  await browser.storage.session.set({ agentWindowId }).catch(() => {});
+  const [tab] = created.tabs;
+  return options.pinned ? browser.tabs.update(tab.id, { pinned: true }) : tab;
 }
 
 async function showForRealInput(data) {
   const tab = await browser.tabs.get(data.tabId);
-  data.agentWindow = tab.windowId === agentWindowId;
-  if (!tab.active && !settings.followAgent) {
-    const [shown] = await browser.tabs.query({ active: true, windowId: tab.windowId });
-    if (shown) shownInsteadOf.set(data.tabId, shown.id);
-    data.switched = true;
+  data.agentWindow = Boolean(await currentAgentWindow()) && tab.windowId === agentWindowId;
+  let entry = shownInsteadOf.get(data.tabId);
+  // Left by an action that never finished: not to be applied to this one
+  if (entry && entry.token !== data.token) {
+    shownInsteadOf.delete(data.tabId);
+    entry = null;
   }
+  if (!tab.active && !settings.followAgent && !data.agentWindow) {
+    const [shown] = await browser.tabs.query({ active: true, windowId: tab.windowId });
+    if (shown) {
+      entry = { previous: shown.id, token: data.token };
+      shownInsteadOf.set(data.tabId, entry);
+    }
+  }
+  // Also on a retry of the same action, which finds the tab already showing
+  data.switched = Boolean(entry);
   await browser.tabs.update(data.tabId, { active: true });
 }
 
 async function giveTabBack(tabId) {
-  const previous = shownInsteadOf.get(tabId);
-  if (previous === undefined) return;
+  const entry = shownInsteadOf.get(tabId);
+  if (!entry) return;
   shownInsteadOf.delete(tabId);
   const tab = await browser.tabs.get(tabId);
   // Unless the person has since moved on to another tab themselves
-  if (tab.active) await browser.tabs.update(previous, { active: true }).catch(() => {});
+  if (tab.active) await browser.tabs.update(entry.previous, { active: true }).catch(() => {});
+}
+
+// When an action can't finish, the person still gets their tab back
+function giveAllTabsBack() {
+  for (const tabId of [...shownInsteadOf.keys()]) giveTabBack(tabId).catch(() => {});
 }
 
 function sendAgentState(tabId) {

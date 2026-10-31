@@ -26,6 +26,7 @@ import asyncio
 import atexit
 import re
 import sys
+import time
 from typing import Any, Dict, List
 
 AVAILABLE = sys.platform == 'win32'
@@ -44,6 +45,11 @@ if AVAILABLE:
         pass
     user32.VkKeyScanW.restype = ctypes.c_short
     EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [('cbSize', wintypes.UINT), ('dwTime', wintypes.DWORD)]
+
+    kernel32.GetTickCount.restype = wintypes.DWORD
 
 WM_ACTIVATE, WA_INACTIVE, WA_ACTIVE = 0x006, 0, 1
 SW_SHOWNOACTIVATE, HWND_BOTTOM = 4, 1
@@ -148,8 +154,22 @@ ACTIVATE_SETTLE_S = 0.1
 # open menus when the window blurs, so stepping down after each action would
 # undo what the agent just opened before its next call.
 ACTIVE_FOR_S = 20.0
+# Swapping activation with the person's window of the same Firefox: how long they
+# must have been idle, how long to wait for that, and how long Firefox takes
+IDLE_BEFORE_SWAP_S = 2.0
+IDLE_WAIT_MAX_S = 10.0
+IDLE_POLL_S = 0.25
+SWAP_SETTLE_S = 0.05
+AGENT_WINDOW_PREFACE = '[Agent] '
 # Background windows made active, and the timer that steps each one down
 activated: Dict[int, asyncio.TimerHandle] = {}
+
+
+def seconds_idle() -> float:
+    """Since the person last touched the keyboard or mouse. Posted messages don't count."""
+    info = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+    user32.GetLastInputInfo(ctypes.byref(info))
+    return (kernel32.GetTickCount() - info.dwTime) / 1000.0
 
 
 def same_firefox(one: int, other: int) -> bool:
@@ -224,13 +244,19 @@ class WindowInput:
         self.origin = (screen['x'], screen['y'])
         self.dpr = screen['dpr'] or 1
         self.title = screen.get('title') or ''
+        # The add-on prefixes the agent window's title, so a page's title on its
+        # own can't match this to a window of the person's, or the reverse
+        self.agent_window = bool(prep.get('agentWindow'))
+        if self.agent_window and self.title:
+            self.title = AGENT_WINDOW_PREFACE + self.title
         self.point = prep.get('point')
         self.hwnd = 0
         self.thread = 0
         self.buttons = 0
         self.attached = False
         self.made_active = False
-        self.agent_window = bool(prep.get('agentWindow'))
+        self.lent_by = 0
+        self.lent_at = 0.0
 
     async def __aenter__(self):
         x, y = self.screen_point(0, 0)
@@ -257,7 +283,9 @@ class WindowInput:
 
     async def __aexit__(self, *exc):
         self.release()
-        if self.made_active:
+        if self.lent_by:
+            self.give_back()
+        elif self.made_active:
             activated[self.hwnd] = asyncio.get_running_loop().call_later(ACTIVE_FOR_S, step_down, self.hwnd)
 
     async def make_active(self):
@@ -270,14 +298,45 @@ class WindowInput:
         if foreground == self.hwnd:
             return
         if same_firefox(foreground, self.hwnd):
-            raise WindowInputUnavailable('the person is using another window of this Firefox, '
-                                         'which is the only one that can take keys right now')
+            await self.borrow_activation(foreground)
+            return
         self.made_active = True
         pending = activated.pop(self.hwnd, None)
         if pending:
             pending.cancel()
         self.post(WM_ACTIVATE, WA_ACTIVE, 0)
         await asyncio.sleep(ACTIVATE_SETTLE_S)
+
+    async def borrow_activation(self, theirs: int):
+        """The person is in another window of this Firefox, which has one active
+        window per process, and keys posted anywhere else land in theirs. So this
+        window borrows it for the action, only while they aren't using the
+        computer: a key they press during the swap would land here instead."""
+        waited = 0.0
+        while seconds_idle() < IDLE_BEFORE_SWAP_S:
+            if waited >= IDLE_WAIT_MAX_S:
+                raise WindowInputUnavailable('the person is using another window of this Firefox, which is the '
+                                             f'only one that can take keys, and did not pause for {IDLE_WAIT_MAX_S:.0f} s')
+            await asyncio.sleep(IDLE_POLL_S)
+            waited += IDLE_POLL_S
+        self.lent_by = theirs
+        self.lent_at = time.monotonic()
+        self.made_active = True
+        user32.PostMessageW(theirs, WM_ACTIVATE, WA_INACTIVE, 0)
+        self.post(WM_ACTIVATE, WA_ACTIVE, 0)
+        await asyncio.sleep(SWAP_SETTLE_S)
+
+    def give_back(self):
+        user32.PostMessageW(self.hwnd, WM_ACTIVATE, WA_INACTIVE, 0)
+        user32.PostMessageW(self.lent_by, WM_ACTIVATE, WA_ACTIVE, 0)
+        self.lent_by = 0
+
+    async def keep_clear_of_the_person(self):
+        """They came back mid-typing: hand activation back until they pause"""
+        if self.lent_by and seconds_idle() <= time.monotonic() - self.lent_at:
+            theirs = self.lent_by
+            self.give_back()
+            await self.borrow_activation(theirs)
 
     # Positions
 
@@ -463,6 +522,7 @@ class WindowInput:
             self.post(WM_CHAR, ord(char), 1)
             sent += 1
             if sent % CHARS_PER_BATCH == 0:
+                await self.keep_clear_of_the_person()
                 await asyncio.sleep(STEP_S)
         await asyncio.sleep(STEP_S)
 

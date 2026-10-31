@@ -213,6 +213,109 @@ def test_the_agent_window_comes_back_behind_everything_and_asks_again(monkeypatc
     assert calls == [win_input.SW_SHOWNOACTIVATE, win_input.HWND_BOTTOM]
 
 
+def fake_windows(monkeypatch, foreground, same_firefox=False):
+    posted = []
+    monkeypatch.setattr(win_input, 'firefox_windows', lambda minimised=False: [7])
+    monkeypatch.setattr(win_input, 'window_contains', lambda hwnd, x, y: True)
+    monkeypatch.setattr(win_input, 'window_title', lambda hwnd: 'Page - Firefox')
+    monkeypatch.setattr(win_input, 'ACTIVATE_SETTLE_S', 0)
+    monkeypatch.setattr(win_input, 'same_firefox', lambda one, other: same_firefox or one == other)
+    monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: foreground, raising=False)
+    monkeypatch.setattr(win_input.user32, 'GetWindowThreadProcessId', lambda hwnd, _: 1, raising=False)
+    monkeypatch.setattr(win_input.user32, 'IsIconic', lambda hwnd: 0, raising=False)
+    monkeypatch.setattr(win_input.user32, 'PostMessageW', lambda h, m, w, l: posted.append((h, m, w)) or 1, raising=False)
+    return posted
+
+
+ACTIVE, INACTIVE = (7, win_input.WM_ACTIVATE, win_input.WA_ACTIVE), (7, win_input.WM_ACTIVATE, win_input.WA_INACTIVE)
+
+
+@pytest.mark.asyncio
+async def test_keys_make_a_background_window_active_and_it_steps_down_later(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99)
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+        await window.make_active()
+        assert posted == [ACTIVE]
+    # The timer itself is asyncio: what matters is what it does when it fires
+    win_input.activated[7].cancel()
+    win_input.step_down(7)
+    assert posted == [ACTIVE, INACTIVE]
+    assert not win_input.activated
+
+
+@pytest.mark.asyncio
+async def test_an_action_without_keys_leaves_the_window_as_it_was(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99)
+    async with WindowInput(PREP):
+        pass
+    assert posted == []
+    assert not win_input.activated
+
+
+@pytest.mark.asyncio
+async def test_activation_is_posted_again_even_with_a_step_down_pending(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99)
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+    assert posted == [ACTIVE, ACTIVE]
+    win_input.activated[7].cancel()
+    win_input.activated.clear()
+
+
+@pytest.mark.asyncio
+async def test_the_window_the_person_is_in_is_left_alone(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=7)
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+    assert posted == []
+    assert not win_input.activated
+
+
+@pytest.mark.asyncio
+async def test_with_the_person_idle_in_this_firefox_activation_is_borrowed_and_returned(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99, same_firefox=True)
+    monkeypatch.setattr(win_input, 'SWAP_SETTLE_S', 0)
+    monkeypatch.setattr(win_input, 'seconds_idle', lambda: 60)
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+        assert posted == [(99, win_input.WM_ACTIVATE, win_input.WA_INACTIVE), ACTIVE]
+    assert posted[2:] == [INACTIVE, (99, win_input.WM_ACTIVATE, win_input.WA_ACTIVE)]
+    assert not win_input.activated
+
+
+@pytest.mark.asyncio
+async def test_with_the_person_busy_in_this_firefox_their_window_is_not_lowered(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99, same_firefox=True)
+    monkeypatch.setattr(win_input, 'seconds_idle', lambda: 0)
+    monkeypatch.setattr(win_input, 'IDLE_WAIT_MAX_S', 0)
+    async with WindowInput(PREP) as window:
+        with pytest.raises(WindowInputUnavailable):
+            await window.make_active()
+    assert posted == []
+
+
+@pytest.mark.asyncio
+async def test_the_person_coming_back_mid_typing_gets_activation_back(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99, same_firefox=True)
+    monkeypatch.setattr(win_input, 'SWAP_SETTLE_S', 0)
+    idle = iter([60, 0, 60, 60])
+    monkeypatch.setattr(win_input, 'seconds_idle', lambda: next(idle))
+    monkeypatch.setattr(win_input, 'IDLE_POLL_S', 0)
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+        await window.keep_clear_of_the_person()
+        assert posted[2:4] == [INACTIVE, (99, win_input.WM_ACTIVATE, win_input.WA_ACTIVE)]
+        assert window.lent_by == 99
+
+
+def test_the_agent_windows_title_is_never_a_bare_page_title():
+    window = WindowInput({**PREP, 'agentWindow': True})
+    assert window.title == '[Agent] Page'
+
+
 def test_no_screen_position_is_not_worth_retrying():
     with pytest.raises(WindowInputUnavailable) as caught:
         WindowInput({})
