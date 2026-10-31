@@ -90,6 +90,15 @@ async def test_select_by_name_routes_requests(server):
 
 
 @pytest.mark.asyncio
+async def test_an_unnamed_profile_is_named_from_its_id_not_its_order(server):
+    async with connect_as_extension(uri(server)) as first, connect_as_extension(uri(server)) as second:
+        await hello(first, "aaaa1111", "")
+        await hello(second, "bbbb2222", "")
+        await ping(server)
+        assert sorted(b.name for b in server.browsers.values()) == ["Firefox aaaa", "Firefox bbbb"]
+
+
+@pytest.mark.asyncio
 async def test_an_unknown_name_is_refused_with_the_choices(server):
     async with connect_as_extension(uri(server)) as main:
         await hello(main, "aaaa1111", "Main")
