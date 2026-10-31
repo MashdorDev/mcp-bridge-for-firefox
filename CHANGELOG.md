@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`content_snapshot` says when a long list has more rows than are drawn**, where the page gives the count. `browsers_list` says whether real input is on.
 
 ### Fixed
-- **Two sessions no longer hide each other's pages.** They shared one agent window and took turns showing their tab. Each session now gets its own window, and sessions in different profiles no longer wait for each other. See `docs/configuration.md` for what one Firefox still shares.
+- **Two sessions no longer hide each other's pages.** They shared one agent window and took turns showing their tab. Each server, which is each session unless several share one in HTTP mode, now gets its own window, and sessions in different profiles no longer wait for each other. See `docs/configuration.md` for what one Firefox still shares.
 - **A page's own Copy button counts as the agent copying.** `content_paste` refused what it put on the clipboard as the person's. On Windows, with real input.
 - **Another add-on's page says it can't be captured.** It returned a blurred thumbnail that read as a capture.
 - **Real input stops when its target does.** The add-on is asked before every click, key and batch of text whether the tab still shows in its window and the agent isn't paused, and the foreground window is checked again. Once input has gone in, a stop is reported as a stop and never redone by another route. If something else switches the tab mid-text, at most 10 characters can reach the new tab.

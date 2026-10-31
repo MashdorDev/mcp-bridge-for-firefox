@@ -252,6 +252,7 @@ function connectToMCPServer() {
     };
 
     socket.onclose = (event) => {
+      agentWindowOf.delete(socket);
       // Reconnect only if this socket is still the live one.
       //
       // close() fires this handler for a deliberate disconnect as well, and
@@ -274,7 +275,6 @@ function connectToMCPServer() {
       updateBadge();
       clearAllMonitors('the connection to the server dropped');
       giveTabsBackOf(socket);
-      agentWindowOf.delete(socket);
       releaseAgentTabsOf(socket);
       scheduleReconnect();
     };
@@ -1214,29 +1214,31 @@ async function agentWindowPreface(number = 1) {
   return `[Agent ${profile.slice(0, 4)}${number > 1 ? `.${number}` : ''}] `;
 }
 
-// Kept over a reload of the add-on, which clears session storage: tabs of a window
-// it lost track of would be looked for by their bare page title. Window ids restart
-// with Firefox, so an id only counts with its title: it could be the person's now.
+// Found again by their titles after a reload of the add-on: tabs of a window it lost
+// track of would be looked for by their bare page title. An id wouldn't do, as they
+// restart with Firefox. A page's title can't pass for one: the server would then
+// look for the prefix twice and find nothing.
 let agentWindowsLoaded = null;
 
 function loadAgentWindows() {
   agentWindowsLoaded ||= (async () => {
-    const stored = await browser.storage.local.get({ agentWindows: {} }).catch(() => ({ agentWindows: {} }));
-    for (const [id, preface] of Object.entries(stored.agentWindows)) {
-      const window = await browser.windows.get(Number(id)).catch(() => null);
-      if (window && (window.title || '').startsWith(preface)) agentWindows.set(Number(id), preface);
+    if (settings.agentProfile) return;
+    const { instance_id: profile } = await browserIdentity();
+    const ours = new RegExp(`^\\[Agent ${profile.slice(0, 4)}(\\.\\d+)?\\] `);
+    for (const window of await browser.windows.getAll()) {
+      const preface = (window.title || '').match(ours);
+      if (preface && !agentWindows.has(window.id)) agentWindows.set(window.id, preface[0]);
     }
   })();
   return agentWindowsLoaded;
 }
 
-function saveAgentWindows() {
-  return browser.storage.local.set({ agentWindows: Object.fromEntries(agentWindows) }).catch(() => {});
-}
+browser.windows.onRemoved.addListener(id => agentWindows.delete(id));
 
-browser.windows.onRemoved.addListener(id => {
-  if (agentWindows.delete(id)) saveAgentWindows();
-});
+// A server gone by now must not hold a window nothing will ever free
+function claimAgentWindow(socket, windowId) {
+  if (socket.readyState === WebSocket.OPEN) agentWindowOf.set(socket, windowId);
+}
 
 // One at a time, or two tabs opening at once would make two windows
 function tabInAgentWindow(options, socket) {
@@ -1269,7 +1271,7 @@ async function openTabInAgentWindow(options, socket) {
     windowId = [...agentWindows.keys()].find(id => !taken.has(id));
   }
   if (windowId !== undefined) {
-    agentWindowOf.set(socket, windowId);
+    claimAgentWindow(socket, windowId);
     // Not active: this server may be mid-action in the tab showing there, and the
     // action that needs this one brings it up
     return browser.tabs.create({ ...options, active: false, windowId });
@@ -1283,8 +1285,7 @@ async function openTabInAgentWindow(options, socket) {
   // The server brings it back behind everything when it needs to aim a click.
   const created = await browser.windows.create({ url: options.url, state: 'minimized', titlePreface });
   agentWindows.set(created.id, titlePreface);
-  agentWindowOf.set(socket, created.id);
-  await saveAgentWindows();
+  claimAgentWindow(socket, created.id);
   const [tab] = created.tabs;
   return options.pinned ? browser.tabs.update(tab.id, { pinned: true }) : tab;
 }
@@ -1297,13 +1298,18 @@ async function showForRealInput(data, socket) {
   data.agentWindow = ownWindow;
   data.ownWindow = ownWindow;
   data.windowPreface = agentWindows.get(tab.windowId);
+  // Working in it says it is taken, which only a new tab said until now, and that
+  // is forgotten when the add-on reloads
+  if (ownWindow && !agentWindowOf.has(socket) && ![...agentWindowOf.values()].includes(tab.windowId)) {
+    claimAgentWindow(socket, tab.windowId);
+  }
   // A profile set aside for agents has no agent window, but the same title as a
   // window of the person's in their own Firefox must not pass for this one. The
   // person can still be in it, logging in to a site, so its tabs are not free to show.
   if (settings.agentProfile) {
     data.agentWindow = true;
-    data.windowPreface = await agentWindowPreface();
-    if (!prefacedWindows.has(tab.windowId)) {
+    data.windowPreface = data.windowPreface || await agentWindowPreface();
+    if (!ownWindow && !prefacedWindows.has(tab.windowId)) {
       await browser.windows.update(tab.windowId, { titlePreface: data.windowPreface });
       prefacedWindows.add(tab.windowId);
     }
