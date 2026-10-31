@@ -60,7 +60,26 @@ function snapshot(maxElements) {
       break;
     }
   }
-  return lines.join('\n');
+  return lines.concat(unrenderedRows()).join('\n');
+}
+
+// Long lists draw only what is near the screen, so a snapshot of one looks
+// complete. Where the page says how many there are, say what is missing.
+function unrenderedRows() {
+  const notes = [];
+  for (const list of document.querySelectorAll('[aria-rowcount]')) {
+    const total = Number(list.getAttribute('aria-rowcount'));
+    const drawn = list.querySelectorAll('[role=row], tr').length;
+    if (total > drawn && isVisible(list)) notes.push(`... ${describe(list)} has ${total} rows, ${drawn} drawn: content_scroll it for the rest`);
+  }
+  const parents = new Set([...document.querySelectorAll('[aria-setsize]')].map(item => item.parentElement));
+  for (const list of parents) {
+    if (!list) continue;
+    const items = list.querySelectorAll(':scope > [aria-setsize]');
+    const total = Number(items[0].getAttribute('aria-setsize'));
+    if (total > items.length && isVisible(list)) notes.push(`... ${describe(list)} has ${total} items, ${items.length} drawn: content_scroll it for the rest`);
+  }
+  return notes;
 }
 
 // What scrolling at this element moves: the nearest container that can still go

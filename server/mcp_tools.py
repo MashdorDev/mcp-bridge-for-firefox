@@ -2154,6 +2154,7 @@ class FoxMCPTools:
             for browser in browsers:
                 active = " (active)" if browser.key == server.active_browser else ""
                 version = f", add-on {browser.version}" if browser.version else ", add-on older than 1.4.3"
+                version += ", real input on" if browser.real_input else ", real input off"
                 minutes = int((time.time() - browser.connected_at) // 60)
                 app = " [Thunderbird]" if browser.app == 'thunderbird' else ""
                 app += " [agent profile]" if getattr(browser, 'agent_profile', False) else ""

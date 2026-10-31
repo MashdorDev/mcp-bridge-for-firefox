@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`page_realm` on `content_execute_script`**, for page objects the isolated realm can't iterate.
 - **`scripts/clean-automation-prefs.py`** removes the test prefs `--remote-debugging-port` leaves in a profile.
 
+- **`content_snapshot` says when a long list has more rows than are drawn**, where the page gives the count. `browsers_list` says whether real input is on.
+
 ### Fixed
 - **A page's own Copy button counts as the agent copying.** `content_paste` refused what it put on the clipboard as the person's. On Windows, with real input.
 - **Another add-on's page says it can't be captured.** It returned a blurred thumbnail that read as a capture.
