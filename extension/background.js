@@ -1188,6 +1188,8 @@ const prefacedWindows = new Set();
 // The title's prefix tells the server, and the person, which window this is. It
 // also means a page's title alone can never match it to one of theirs.
 const AGENT_WINDOW_PREFACE = '[Agent] ';
+const AGENT_TAB_ADDRESS_MS = 5000;
+const AGENT_TAB_ADDRESS_POLL_MS = 50;
 
 async function currentAgentWindow() {
   if (agentWindowId === null) {
@@ -1203,10 +1205,22 @@ async function currentAgentWindow() {
 }
 
 // One at a time, or two tabs opening at once would make two windows
-function tabInAgentWindow(options) {
+async function tabInAgentWindow(options) {
   const opened = agentWindowTurn.then(() => openTabInAgentWindow(options));
   agentWindowTurn = opened.catch(() => {});
-  return opened;
+  return untilAddressChanged(await opened, options.url);
+}
+
+// A tab in a minimised window stays on about:blank until the page answers, and
+// until then a script in it has no host permission and tabs_list can't name it
+async function untilAddressChanged(tab, url) {
+  if (!url || url === 'about:blank') return tab;
+  const deadline = Date.now() + AGENT_TAB_ADDRESS_MS;
+  while (tab.url === 'about:blank' && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, AGENT_TAB_ADDRESS_POLL_MS));
+    tab = await browser.tabs.get(tab.id).catch(() => tab);
+  }
+  return tab;
 }
 
 async function openTabInAgentWindow(options) {
