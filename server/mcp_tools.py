@@ -26,6 +26,7 @@ from typing import Annotated, Dict, Any, Optional, List, TypedDict, Union
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.tools import Tool
 from fastmcp.utilities.types import Image
 
 try:
@@ -66,6 +67,8 @@ COPY_WAIT_S = 1.5
 MODIFIED_KEY = re.compile(r"(^|\+)(control|ctrl|alt|meta|command)\+", re.IGNORECASE)
 # real_input's answer for a target only the scripted path can work
 SCRIPTED_ONLY = object()
+# A long page read whole can cost tens of thousands of tokens by accident
+TEXT_LIMIT = 20000
 # Why this call has no real input, for the refusal to say which case it is
 REAL_INPUT_MISS = contextvars.ContextVar("real_input_miss", default="")
 # Firefox updates a window's title and a tab's visibility shortly after activating it
@@ -86,8 +89,8 @@ FAILURE_RESULT = re.compile(r"(Failed to|Unable to|Error |Unexpected error|Windo
 MAX_STATUS_LENGTH = 80
 
 STATUS_DESCRIPTION = (
-    'A few words in the first person shown on the page while you work, e.g. '
-    '"Reading the board". Call tabs_release when done with the tab.')
+    'Few words shown on the page, e.g. "Reading the board". Call tabs_release when done.'
+)
 STATUS_TYPE = Annotated[Optional[str], Field(description=STATUS_DESCRIPTION)]
 
 
@@ -190,6 +193,36 @@ class TabsListResponse(TypedDict):
     """Type definition for tabs.list response from browser extension"""
     tabs: List[TabInfo]
     debug: Dict[str, Any]
+
+def slim_schema(schema: Any) -> Any:
+    """A tool's input schema without what only repeats the rest of it
+
+    Titles restate the property name, and an Optional comes out as anyOf with
+    null plus a null default, which a missing argument already means. That was
+    about four fifths of the tool list, sent to the model on every request.
+    """
+    if isinstance(schema, list):
+        return [slim_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    slim = {key: slim_schema(value) for key, value in schema.items()
+            if not (key == 'title' and isinstance(value, str))
+            and not (key == 'default' and value is None)
+            and not (key == 'additionalProperties' and value is False)}
+    options = slim.get('anyOf')
+    # With a real default, null means something a missing argument doesn't
+    if options and 'default' not in slim:
+        real = [option for option in options if option != {'type': 'null'}]
+        if len(real) == 1:
+            del slim['anyOf']
+            slim.update(real[0])
+    return slim
+
+
+class PageContent(str):
+    """Text from the page or a script, which may start like a failure ("Error 404")
+    and still be a successful read"""
+
 
 class FoxMCPTools:
     """MCP tools that communicate with Firefox extension via WebSocket"""
@@ -300,7 +333,10 @@ class FoxMCPTools:
             self.group_by_tool[fn.__name__] = group
             if group in self.disabled_groups and fn.__name__ not in self.enabled_tools:
                 return fn
-            return self.mcp.tool()(self._with_status(self._failures_as_errors(self._for_app(group, fn))))
+            tool = Tool.from_function(self._with_status(self._failures_as_errors(self._for_app(group, fn))), output_schema=None)
+            tool.parameters = slim_schema(tool.parameters)
+            self.mcp.add_tool(tool)
+            return fn
 
         return register
 
@@ -348,7 +384,7 @@ class FoxMCPTools:
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
             result = await fn(*args, **kwargs)
-            if isinstance(result, str) and FAILURE_RESULT.match(result):
+            if isinstance(result, str) and not isinstance(result, PageContent) and FAILURE_RESULT.match(result):
                 raise ToolError(result)
             return result
         return wrapper
@@ -1262,6 +1298,10 @@ class FoxMCPTools:
                     **({"tabId": tab_id} if tab_id is not None else {}),
                     **({"tabId": default_tab, "tabIdOptional": True} if default_tab is not None else {}),
                     "format": format,
+                    # Looked at rather than saved: one image pixel per CSS pixel,
+                    # so a point read off it goes straight into content_click,
+                    # and it costs a fraction of the tokens at high display scaling
+                    **({} if filename else {"scale": 1}),
                     "quality": quality
                 },
                 "timestamp": datetime.now().isoformat()
@@ -2300,12 +2340,12 @@ class FoxMCPTools:
 
         # Get Page Text Tool
         @self._tool()
-        async def content_get_text(tab_id: int, max_length: Optional[int] = None) -> str:
+        async def content_get_text(tab_id: int, max_length: Optional[int] = TEXT_LIMIT) -> str:
             """Get text content from a tab's page
 
             Args:
                 tab_id: ID of the tab to get content from
-                max_length: Optional maximum length of text to return (default: unlimited)
+                max_length: Most characters to return (default: 20000; null for all)
             """
             request = {
                 "id": str(uuid.uuid4()),
@@ -2324,18 +2364,13 @@ class FoxMCPTools:
 
             if response.get("type") == "response" and "data" in response:
                 text = response["data"].get("text", "")
-                url = response["data"].get("url", "Unknown URL")
-                title = response["data"].get("title", "Unknown Title")
 
                 if not text:
-                    return f"No text content found in tab {tab_id} ({title})"
+                    return f"No text content found in tab {tab_id}"
 
-                # Apply length limit if specified
                 if max_length is not None and len(text) > max_length:
-                    truncated_text = text[:max_length]
-                    return f"Text content from {title} ({url}):\n\n{truncated_text}..."
-                else:
-                    return f"Text content from {title} ({url}):\n\n{text}"
+                    return PageContent(f"{text[:max_length]}\n\n[Cut at {max_length} of {len(text)} characters: a larger max_length gets more]")
+                return PageContent(text)
             elif response.get("type") == "error":
                 error_msg = response.get("data", {}).get("message", "Unknown error")
                 return f"Failed to get page text: {error_msg}"
@@ -2412,12 +2447,9 @@ class FoxMCPTools:
 
             if response.get("type") == "response" and "data" in response:
                 result = response["data"].get("result")
-                url = response["data"].get("url", "Unknown URL")
-
                 if result is None:
-                    return f"Script executed successfully in tab {tab_id} ({url}) - no return value"
-
-                return f"Script result from tab {tab_id} ({url}):\n{result}"
+                    return "Script ran, no return value"
+                return PageContent(result)
             elif response.get("type") == "error":
                 error_msg = response.get("data", {}).get("message", "Unknown error")
                 return f"Failed to execute script: {error_msg}"

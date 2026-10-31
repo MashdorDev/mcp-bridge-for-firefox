@@ -229,8 +229,7 @@ class TestBrowserFunctionality:
         print(f"   Script result: {script_content}")
 
         # Verify we got a result
-        assert "Script result from tab" in script_content or "Script executed successfully" in script_content, \
-            "Should get script execution result"
+        assert script_content and not script_content.startswith("Error"), "Should get script execution result"
 
         print("✅ End-to-end JavaScript execution test successful!")
 
@@ -365,7 +364,7 @@ class TestBrowserFunctionality:
         print(f"   Text content received (full): {len(text_content)} chars")
 
         # Verify we got text content
-        assert "Text content from" in text_content, "Should return formatted text content"
+        assert text_content and not text_content.startswith("Error"), "Should return the page's text"
 
         # Check for error pages that might indicate network issues
         if "502 Bad Gateway" in text_content or "503 Service Unavailable" in text_content or "404 Not Found" in text_content:
@@ -385,8 +384,8 @@ class TestBrowserFunctionality:
         limited_content = limited_text_result.get('content', '')
         print(f"   Limited text content received: {len(limited_content)} chars")
 
-        # Verify truncation occurred (accounting for header text)
-        assert "..." in limited_content, "Limited content should be truncated"
+        # Verify truncation occurred
+        assert "[Cut at 100 of" in limited_content, "Limited content should say it was cut"
         assert len(limited_content) < len(text_content), "Limited content should be shorter than unlimited"
 
         print("✅ End-to-end content_get_text test successful!")

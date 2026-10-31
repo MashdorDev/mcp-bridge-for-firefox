@@ -407,8 +407,17 @@ function coverOf(el) {
   return note;
 }
 
+// What a click changed: at once if something already has, else after a moment
+// for the page to react, since most clicks do nothing visible to these checks
+const CLICK_EFFECT_MS = [80, 300];
 async function clickEffect(before) {
-  await new Promise(resolve => setTimeout(resolve, 400));
+  await new Promise(resolve => setTimeout(resolve, CLICK_EFFECT_MS[0]));
+  const seen = pageState(before.el && before.el.isConnected ? before.el : null);
+  // Only a change that is the outcome: focus and aria-expanded move first, and
+  // the dialog or menu they lead to can still be on its way
+  const done = seen.url !== before.url || seen.overlays.length !== before.overlays.length
+    || (before.el && !before.el.isConnected);
+  if (!done) await new Promise(resolve => setTimeout(resolve, CLICK_EFFECT_MS[1] - CLICK_EFFECT_MS[0]));
   const after = pageState(before.el && before.el.isConnected ? before.el : null);
   const changes = [];
   if (after.url !== before.url) changes.push(`the page went to ${after.url}`);
@@ -1288,10 +1297,10 @@ function stopTabMarker() {
 //   short pause to check the target before a click.
 const FITTS_A_MS = 120;
 const FITTS_B_MS = 110;
-const MIN_MOVE_MS = 180;
-const MAX_MOVE_MS = 900;
+const MIN_MOVE_MS = 100;
+const MAX_MOVE_MS = 400;
 const CORRECTION_SHARE = 0.22; // of the move's time, spent on the correction
-const CHECK_PAUSE_MS = [70, 160];
+const CHECK_PAUSE_MS = [30, 70];
 
 const minimumJerk = t => t * t * t * (10 - 15 * t + 6 * t * t);
 const between = ([low, high]) => low + Math.random() * (high - low);

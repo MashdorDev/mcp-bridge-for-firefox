@@ -605,9 +605,14 @@ class FoxMCPServer:
 
         if request_id in self.pending_requests:
             future = self.pending_requests.pop(request_id)
-            if not future.cancelled():
-                future.set_result(response_data)
-                logger.info(f"Completed pending request: {request_id}")
+            # In HTTP mode the tool waiting on this runs on uvicorn's loop, in
+            # another thread. A plain set_result does not wake that loop, so
+            # every call sat until uvicorn's next 100 ms tick.
+            def finish():
+                if not future.done():
+                    future.set_result(response_data)
+            future.get_loop().call_soon_threadsafe(finish)
+            logger.info(f"Completed pending request: {request_id}")
         else:
             logger.warning(f"Received response for unknown request: {request_id}")
 

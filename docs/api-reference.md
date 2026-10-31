@@ -87,8 +87,8 @@ it, which keeps the tool list shorter.
 - `navigation_go_to_url(tab_id, url)` - Navigate to URL
 
 ### Content Access
-- `content_get_text(tab_id, max_length=None)` - Extract page text content
-  - `max_length`: Optional maximum length of text to return (default: unlimited)
+- `content_get_text(tab_id, max_length=20000)` - Extract page text content
+  - `max_length`: Most characters to return (default: 20000; null for all)
 - `content_get_html(tab_id)` - Get page HTML source
 - `content_execute_script(tab_id, code)` - Execute JavaScript directly
 - `content_snapshot(tab_id, max_elements=300)` - List visible interactive elements, each with a ref
