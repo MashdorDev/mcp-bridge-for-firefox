@@ -980,6 +980,7 @@ async function handleTabsAction(id, action, data) {
 
         try {
           await setOverlay(false);
+          if (data.scale) options.scale = data.scale;
           const dataUrl = await (wantedTab
             ? browser.tabs.captureTab(wantedTab.id, options)
             : browser.tabs.captureVisibleTab(windowId, options))

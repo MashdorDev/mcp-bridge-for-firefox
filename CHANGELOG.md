@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`browsers_select` fails as a failure.** An unknown name came back as an ordinary answer, which repeats the name, so a check on the reply could pass.
 ### Added
 - **`content_scroll` scrolls what a wheel would.** Feeds that scroll in an inner container, such as Facebook's, didn't move for keys or the document. It finds the nearest container that can still go that way at an element or point, and says what moved and how much is left. The on-page cursor shows a mouse with its wheel while it scrolls.
+### Changed
+- **Calls are about 80 ms faster, all of them.** A reply woke its waiting tool only on the HTTP server's next 100 ms tick: `content_execute_script` went from 108 ms to 25 ms.
+- **Clicks take about half as long.** They wait for the page's reaction only as long as they need to, 80 to 300 ms instead of a fixed 400, and cursor moves are capped at 400 ms instead of 900. A median click went from 720 ms to 374 ms.
+- **Fewer tokens.** Tool schemas leave out what they repeated, and results are no longer wrapped twice. `content_get_text` stops at 20000 characters by default and says how to get more. Its reply and `content_execute_script`'s no longer start with a line about the page.
+- **Screenshots you look at are in CSS pixels.** A point read off one goes straight into `content_click(x, y)`, and it costs far fewer tokens at high display scaling. Saved files stay at full resolution.
 
 ## [1.13.0] - 2026-10-30
 
