@@ -2472,7 +2472,7 @@ class FoxMCPTools:
 
             return f"Unable to execute script in tab {tab_id}"
 
-        async def page_request(message: Dict[str, Any], timeout: float = 30.0):
+        async def page_request(message: Dict[str, Any], timeout: Optional[float] = None):
             """Send a {"action", "data"} content request
 
             Returns (data, None) on success and (None, error message) on failure.
@@ -2484,7 +2484,7 @@ class FoxMCPTools:
                 **message,
                 **({"to_browser": pinned} if pinned else {}),
                 "timestamp": datetime.now().isoformat()
-            }, timeout=timeout)
+            }, **({"timeout": timeout} if timeout else {}))
             if "error" in response:
                 return None, response["error"]
             if response.get("type") == "response" and "data" in response:
