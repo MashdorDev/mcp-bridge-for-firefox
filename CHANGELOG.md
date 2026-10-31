@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Keys no longer click a field that already has the focus.** `content_press_key` with a target clicked it first, every time, so `Control+a` followed by `Backspace` deleted one character instead of the selection.
+
+### Fixed
 - **A hung page is named.** A request to a page that stopped answering said only "Request timed out". It now says which tab, that other tabs aren't affected, and how to clear it.
 - **`focus_window` says when Windows refused.** It reported "focused successfully" whenever the request was accepted, including when the window stayed behind.
 
