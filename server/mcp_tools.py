@@ -2783,6 +2783,43 @@ class FoxMCPTools:
                 return f"Failed to hover: {error}"
             return f"Hovering over {data.get('hovered')}"
 
+        # Scroll Tool
+        @self._tool()
+        async def content_scroll(
+            tab_id: int, delta_y: int = 600, delta_x: int = 0, ref: Optional[str] = None,
+            selector: Optional[str] = None, x: Optional[int] = None, y: Optional[int] = None,
+            text: Optional[str] = None
+        ) -> str:
+            """Scroll whatever scrolls at an element or point, as a mouse wheel
+            would, including inner containers that keys and the document don't move
+
+            Scrolling is not an input a page can check for trust, so this works
+            the same with real input on or off. Pages that load more on scroll
+            get their usual scroll events.
+
+            Args:
+                tab_id: ID of the tab
+                delta_y: CSS pixels down, or up when negative (default: 600)
+                delta_x: CSS pixels right, or left when negative (default: 0)
+                ref: Element ref from content_snapshot, to scroll what contains it
+                selector: CSS selector, used when no ref is given
+                x: With y, a point in the visible page instead of an element.
+                    With neither, the middle of the page
+                y: See x
+                text: The element showing this text or named this, instead of a ref
+                    or selector
+            """
+            data, error = await page_request({"action": "content.scroll", "data": {
+                "tabId": tab_id, "ref": ref, "selector": selector, "targetName": text, "x": x, "y": y,
+                "deltaX": delta_x, "deltaY": delta_y}})
+            if error:
+                return f"Failed to scroll: {error}"
+            moved = data.get("movedY") or data.get("movedX")
+            where = f"; {data.get('remaining')} px left below" if data.get("remaining", 0) > 0 else "; at the bottom"
+            if not moved:
+                return f"Nothing moved: {data.get('scroller')} is already as far as it goes that way{where}"
+            return f"Scrolled {data.get('scroller')} by {data.get('movedX')},{data.get('movedY')} px{where}"
+
         # Drag Tool
         @self._tool()
         async def content_drag(

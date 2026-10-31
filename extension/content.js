@@ -63,6 +63,61 @@ function snapshot(maxElements) {
   return lines.join('\n');
 }
 
+// What scrolling at this element moves: the nearest container that can still go
+// that way, as a wheel would pick. Feeds such as Facebook's scroll in an inner
+// container and leave the document at 0, so keys and window.scrollBy do nothing.
+function scrollerFor(el, dx, dy) {
+  const can = node => {
+    const style = getComputedStyle(node);
+    const free = value => value === 'auto' || value === 'scroll' || value === 'overlay';
+    const down = free(style.overflowY) && (dy > 0 ? node.scrollTop + node.clientHeight < node.scrollHeight - 1 : dy < 0 && node.scrollTop > 0);
+    const across = free(style.overflowX) && (dx > 0 ? node.scrollLeft + node.clientWidth < node.scrollWidth - 1 : dx < 0 && node.scrollLeft > 0);
+    return down || across;
+  };
+  let innermost = null;
+  for (let node = el; node && node !== document.documentElement; node = node.parentElement || node.getRootNode().host) {
+    if (node === document.body) continue;
+    if (can(node)) return node;
+    const overflow = getComputedStyle(node).overflowY;
+    if (!innermost && (overflow === 'auto' || overflow === 'scroll') && node.scrollHeight > node.clientHeight) innermost = node;
+  }
+  const page = document.scrollingElement || document.documentElement;
+  // Nothing can go that way: answer for the container the agent was after,
+  // not the page behind it, which may not scroll at all
+  return page.scrollHeight > page.clientHeight ? page : innermost || page;
+}
+
+const SCROLL_SHOWN_MS = 500;
+
+// Where the cursor goes for a scroll. Not targetPoint: bringing the element into
+// view would itself scroll, so this is the part of it already on screen.
+function scrollPoint(data) {
+  if (hasTarget(data)) {
+    const el = findTarget(data);
+    const rect = el.getBoundingClientRect();
+    const left = Math.max(rect.left, 0), right = Math.min(rect.right, innerWidth);
+    const top = Math.max(rect.top, 0), bottom = Math.min(rect.bottom, innerHeight);
+    const onScreen = right > left && bottom > top;
+    return { el, x: onScreen ? (left + right) / 2 : innerWidth / 2, y: onScreen ? (top + bottom) / 2 : innerHeight / 2 };
+  }
+  const x = data.x ?? innerWidth / 2, y = data.y ?? innerHeight / 2;
+  return { x, y, el: document.elementFromPoint(x, y) || document.body };
+}
+
+function scrollAt(data, el) {
+  const dx = data.deltaX || 0, dy = data.deltaY || 0;
+  const scroller = scrollerFor(el, dx, dy);
+  const before = { x: scroller.scrollLeft, y: scroller.scrollTop };
+  scroller.scrollBy({ left: dx, top: dy, behavior: 'instant' });
+  const moved = { x: scroller.scrollLeft - before.x, y: scroller.scrollTop - before.y };
+  return {
+    scroller: scroller === document.scrollingElement ? 'the page' : describe(scroller),
+    movedX: Math.round(moved.x), movedY: Math.round(moved.y),
+    top: Math.round(scroller.scrollTop),
+    remaining: Math.round(scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop),
+  };
+}
+
 // Where an action happens: an element (by ref or selector), scrolled into view,
 // or a point given as x and y in the viewport, for canvases. Returns the point
 // and whatever element is there.
@@ -826,7 +881,7 @@ const IDLE_AFTER_MS = 20000;
 // closed while the button is held (moving an item or panning a canvas); drop
 // and nodrop: over a place that takes the dragged item, or one that does not
 const CURSOR_STATES = ['idle', 'thinking', 'reading', 'clicking', 'typing', 'waiting', 'working',
-  'grab', 'grabbing', 'drop', 'nodrop'];
+  'grab', 'grabbing', 'drop', 'nodrop', 'scrolling'];
 let fieldTimer = null;
 let idleTimer = null;
 let cursorPos = null;
@@ -885,6 +940,8 @@ const CURSOR_SHAPES = {
   move: { hot: [11, 11], draw: '<path d="M11 1l3.5 4h-2.3v4.8h4.8V7.5L21 11l-4 3.5v-2.3h-4.8V17h2.3L11 21l-3.5-4h2.3v-4.8H5v2.3L1 11l4-3.5v2.3h4.8V5H7.5z"/>' },
   notallowed: { hot: [11, 11], line: true, draw: '<circle cx="11" cy="11" r="7.5"/><path d="M5.7 5.7l10.6 10.6"/>' },
   crosshair: { hot: [11, 11], line: true, draw: '<path d="M11 2v7M11 13v7M2 11h7M13 11h7"/>' },
+  // A mouse with its wheel, and the two ways it turns
+  scroll: { hot: [11, 11], line: true, draw: '<rect x="7" y="5.5" width="8" height="11" rx="4"/><path d="M11 8v2.5"/><path d="M8.5 3L11 1l2.5 2M8.5 19l2.5 2 2.5-2"/>' },
   ns: { hot: [11, 11], draw: `${RESIZE}/>` },
   ew: { hot: [11, 11], draw: `${RESIZE} transform="rotate(90 11 11)"/>` },
   nwse: { hot: [11, 11], draw: `${RESIZE} transform="rotate(-45 11 11)"/>` },
@@ -909,6 +966,8 @@ const CSS_CURSORS = {
 // While dragging, the hand: open on the way to the item and again on letting go,
 // closed while the button is held
 const HAND_SHAPES = { grab: 'open', grabbing: 'closed', drop: 'closed', nodrop: 'closed' };
+// States that keep their own shape, whatever is under the cursor
+const STATE_SHAPES = { ...HAND_SHAPES, scrolling: 'scroll' };
 
 function cursorShapeSvg(name, { draw, line }) {
   const outline = line ? 'fill="none" stroke="#fff" stroke-width="4.4" stroke-linecap="round"'
@@ -997,6 +1056,8 @@ function overlayRoot() {
         ${Object.entries(CURSOR_SHAPES).map(([name, { hot }]) => `.s-${name} { left:${-hot[0]}px; top:${-hot[1]}px; }`).join(' ')}
         ${Object.keys(CURSOR_SHAPES).map(name => `.pointer[data-shape=${name}] .s-${name}`).join(', ')} { display:block; }
         .pointer.grab .shape { animation: breathe 2.4s ease-in-out infinite; }
+        .pointer.scrolling .s-scroll { animation: scrollnudge .5s ease-in-out infinite; }
+        @keyframes scrollnudge { 50% { transform: translateY(var(--scroll-nudge, 2px)); } }
         .badge.mark { left:8px; top:8px; width:12px; height:12px; border-radius:50%; border:1.5px solid #fff;
           box-shadow:0 1px 2px rgba(0,0,0,.45); align-items:center; justify-content:center; color:#fff; font:700 10px/1 system-ui, sans-serif; }
         .pointer[data-shape=help] .badge.help, .pointer[data-shape=copy] .badge.copy, .pointer[data-shape=alias] .badge.alias {
@@ -1065,7 +1126,7 @@ function setCursorState(state) {
   if (state === 'thinking') idleTimer = setTimeout(() => setCursorState('idle'), IDLE_AFTER_MS);
   if (state !== cursorState) reading = null;
   cursorState = state;
-  pointer.dataset.shape = HAND_SHAPES[state] || pageShape;
+  pointer.dataset.shape = STATE_SHAPES[state] || pageShape;
   scheduleIdleMotion();
 }
 
@@ -1073,7 +1134,7 @@ function setCursorState(state) {
 function followPage(point) {
   if (!point || !settings.overlayEnabled) return;
   pageShape = shapeAt(point.x, point.y);
-  if (!(cursorState in HAND_SHAPES)) overlayRoot().shadowRoot.querySelector('.pointer').dataset.shape = pageShape;
+  if (!(cursorState in STATE_SHAPES)) overlayRoot().shadowRoot.querySelector('.pointer').dataset.shape = pageShape;
 }
 
 // The button goes up: the hand opens, then the cursor takes the page's shape
@@ -1547,6 +1608,21 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
               scripted: data.purpose === 'type' && el instanceof HTMLSelectElement,
               point: { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) },
             } : { target: 'the page', screen: screenInfo() });
+          })
+          .catch(error => sendResponse({ error: error.message }));
+        break;
+      }
+
+      case 'scroll': {
+        showOverlay('scrolling');
+        const at = scrollPoint(data);
+        overlayRoot().shadowRoot.querySelector('.pointer').style.setProperty('--scroll-nudge', (data.deltaY || 0) < 0 ? '-2px' : '2px');
+        moveCursorToPoint(at, 40, false)
+          .then(async () => {
+            const scrolled = scrollAt(data, at.el);
+            // Long enough to see, unless nobody can
+            if (!document.hidden && settings.overlayEnabled) await new Promise(resolve => setTimeout(resolve, SCROLL_SHOWN_MS));
+            sendResponse(scrolled);
           })
           .catch(error => sendResponse({ error: error.message }));
         break;
