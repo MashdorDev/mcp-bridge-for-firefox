@@ -103,6 +103,7 @@ it, which keeps the tool list shorter.
   - `right_click` opens the page's context menu
   - `x` and `y` click a point in the visible page (CSS pixels from the top left)
     instead of an element, for canvases such as a Miro board
+- `content_scroll(tab_id, delta_y=600, delta_x=0, ref=None, selector=None, x=None, y=None, text=None)` - Scroll whatever scrolls at an element or point, including inner containers
 - `content_hover(tab_id, ref=None, selector=None, x=None, y=None, text=None)` - Move the mouse onto an element or a point without clicking
   - Opens hover menus and shows tooltips or buttons that only appear on hover
 - `content_drag(tab_id, from_ref=None, from_selector=None, from_x=None, from_y=None, to_ref=None, to_selector=None, to_x=None, to_y=None, button="left")` - Drag from one element or point to another and let go

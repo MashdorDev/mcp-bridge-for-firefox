@@ -63,6 +63,47 @@ function snapshot(maxElements) {
   return lines.join('\n');
 }
 
+// What scrolling at this element moves: the nearest container that can still go
+// that way, as a wheel would pick. Feeds such as Facebook's scroll in an inner
+// container and leave the document at 0, so keys and window.scrollBy do nothing.
+function scrollerFor(el, dx, dy) {
+  const can = node => {
+    const style = getComputedStyle(node);
+    const free = value => value === 'auto' || value === 'scroll' || value === 'overlay';
+    const down = free(style.overflowY) && (dy > 0 ? node.scrollTop + node.clientHeight < node.scrollHeight - 1 : dy < 0 && node.scrollTop > 0);
+    const across = free(style.overflowX) && (dx > 0 ? node.scrollLeft + node.clientWidth < node.scrollWidth - 1 : dx < 0 && node.scrollLeft > 0);
+    return down || across;
+  };
+  let innermost = null;
+  for (let node = el; node && node !== document.documentElement; node = node.parentElement || node.getRootNode().host) {
+    if (node === document.body) continue;
+    if (can(node)) return node;
+    const overflow = getComputedStyle(node).overflowY;
+    if (!innermost && (overflow === 'auto' || overflow === 'scroll') && node.scrollHeight > node.clientHeight) innermost = node;
+  }
+  const page = document.scrollingElement || document.documentElement;
+  // Nothing can go that way: answer for the container the agent was after,
+  // not the page behind it, which may not scroll at all
+  return page.scrollHeight > page.clientHeight ? page : innermost || page;
+}
+
+function scrollAt(data) {
+  // Not targetPoint: bringing the element into view would itself scroll
+  const el = hasTarget(data) ? findTarget(data)
+    : document.elementFromPoint(data.x ?? innerWidth / 2, data.y ?? innerHeight / 2) || document.body;
+  const dx = data.deltaX || 0, dy = data.deltaY || 0;
+  const scroller = scrollerFor(el, dx, dy);
+  const before = { x: scroller.scrollLeft, y: scroller.scrollTop };
+  scroller.scrollBy({ left: dx, top: dy, behavior: 'instant' });
+  const moved = { x: scroller.scrollLeft - before.x, y: scroller.scrollTop - before.y };
+  return {
+    scroller: scroller === document.scrollingElement ? 'the page' : describe(scroller),
+    movedX: Math.round(moved.x), movedY: Math.round(moved.y),
+    top: Math.round(scroller.scrollTop),
+    remaining: Math.round(scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop),
+  };
+}
+
 // Where an action happens: an element (by ref or selector), scrolled into view,
 // or a point given as x and y in the viewport, for canvases. Returns the point
 // and whatever element is there.
@@ -1549,6 +1590,12 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
             } : { target: 'the page', screen: screenInfo() });
           })
           .catch(error => sendResponse({ error: error.message }));
+        break;
+      }
+
+      case 'scroll': {
+        showOverlay('working');
+        sendResponse(scrollAt(data));
         break;
       }
 

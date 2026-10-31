@@ -1096,6 +1096,7 @@ const AGENT_ACTIVITY = {
   'content.real_input_prep': ['clicking', 'Clicking'],
   'content.real_pointer_prep': ['clicking', 'Moving the mouse'],
   'content.hover': ['clicking', 'Pointing'],
+  'content.scroll': ['working', 'Scrolling'],
   'content.drag': ['clicking', 'Dragging'],
   'content.check_typed': ['typing', 'Typing'],
   'content.real_input_arrived': ['typing', 'Pressing a key'],
@@ -1320,6 +1321,7 @@ async function handleContentAction(id, action, data) {
       case 'content.caret_to_end':
       case 'content.real_input_prep':
       case 'content.real_pointer_prep':
+      case 'content.scroll':
       case 'content.hover':
       case 'content.drag':
       case 'content.click_effect':
@@ -1335,7 +1337,7 @@ async function handleContentAction(id, action, data) {
           'content.capture_file_input': 'captureFileInput', 'content.real_input_prep': 'realInputPrep',
           'content.check_typed': 'checkTypedText', 'content.caret_to_end': 'caretToEnd', 'content.real_pointer_prep': 'realPointerPrep',
           'content.real_input_arrived': 'realInputArrived',
-          'content.hover': 'hover', 'content.drag': 'drag', 'content.click_effect': 'clickEffect' }[action];
+          'content.hover': 'hover', 'content.scroll': 'scroll', 'content.drag': 'drag', 'content.click_effect': 'clickEffect' }[action];
         // Real input posted to the window lands in the tab showing in it
         if (data.activate) await browser.tabs.update(data.tabId, { active: true });
         const pageResult = await sendMessageWithRetry(data.tabId, { action: pageAction, data });
