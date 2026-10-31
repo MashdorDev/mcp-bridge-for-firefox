@@ -168,6 +168,9 @@ IDLE_WAIT_MAX_S = 10.0
 IDLE_POLL_S = 0.25
 SWAP_SETTLE_S = 0.05
 SWAP_SETTLE_STEPS = 5
+# How long Firefox may take to raise the person's window again, polled
+GIVE_BACK_WAIT_S = 0.3
+GIVE_BACK_POLL_S = 0.01
 AGENT_WINDOW_PREFACE = '[Agent] '
 # One action at a time across every server on this computer: how long to wait
 MACHINE_TURN_WAIT_S = 30.0
@@ -243,9 +246,10 @@ async def machine_turn():
 def hand_back(hwnd: int, theirs: int):
     foreground = user32.GetForegroundWindow()
     user32.PostMessageW(hwnd, WM_ACTIVATE, WA_INACTIVE, 0)
-    # The borrowing window holds the foreground because Firefox raised it. Anywhere
-    # else, Windows has told Firefox already, and theirs must not read as active
-    if foreground in (hwnd, theirs):
+    # The borrowing window holds the foreground because Firefox raised it, and none
+    # at all is that happening. Anywhere else, Windows has told Firefox already,
+    # and theirs must not read as active
+    if foreground in (0, hwnd, theirs):
         user32.PostMessageW(theirs, WM_ACTIVATE, WA_ACTIVE, 0)
 
 
@@ -295,6 +299,14 @@ def hidden_window(title: str, x: int, y: int) -> int:
     return minimised[0]
 
 
+def untitled_agent_window() -> int:
+    """A page with no title says nothing, but the agent window still has its prefix"""
+    windows = [hwnd for hwnd in firefox_windows(minimised=True) if window_title(hwnd).startswith(AGENT_WINDOW_PREFACE)]
+    if len(windows) != 1:
+        raise WindowNotShowing("the page has no title to tell its Firefox window from the others")
+    return windows[0]
+
+
 class WindowInput:
     """Input for one tab, through its Firefox window: `async with WindowInput(prep) as win:`
 
@@ -338,7 +350,7 @@ class WindowInput:
         if self.hidden:
             # The tab may not have come up yet, and hidden no longer says so
             await asyncio.sleep(ACTIVATE_SETTLE_S)
-            self.hwnd = hidden_window(self.title, x, y)
+            self.hwnd = untitled_agent_window() if self.agent_window and not self.title else hidden_window(self.title, x, y)
             self.thread = user32.GetWindowThreadProcessId(self.hwnd, None)
             return self
         windows = [hwnd for hwnd in firefox_windows() if window_contains(hwnd, x, y)]
@@ -349,13 +361,12 @@ class WindowInput:
         # the agent's clicks and keys
         if self.title:
             windows = [hwnd for hwnd in windows if shows_page(window_title(hwnd), self.title)]
-        else:
+        elif self.agent_window:
+            windows = [untitled_agent_window()]
+        elif len(windows) > 1:
             # A page with no title yet says nothing, so it takes the spot being
             # beyond doubt
-            if self.agent_window:
-                windows = [hwnd for hwnd in windows if window_title(hwnd).startswith(AGENT_WINDOW_PREFACE)]
-            if len(windows) > 1:
-                raise WindowNotShowing('the page has no title to tell its Firefox window from the others there')
+            raise WindowNotShowing('the page has no title to tell its Firefox window from the others there')
         hwnd = (windows or [0])[0]
         if not hwnd:
             raise WindowNotShowing("the tab's Firefox window was not found (minimised?)")
@@ -367,6 +378,7 @@ class WindowInput:
         self.release()
         if self.lent_by:
             self.give_back()
+            await self.until_raised_again()
         elif self.made_active:
             activated[self.hwnd] = asyncio.get_running_loop().call_later(ACTIVE_FOR_S, step_down, self.hwnd)
         # Falling back from here would do it all again on top of what went in
@@ -383,7 +395,8 @@ class WindowInput:
         here to see that."""
         await self.check_showing()
         foreground = user32.GetForegroundWindow()
-        if self.lent_by and foreground in (self.hwnd, self.lent_by):
+        # None at all is only for a moment, while the foreground changes
+        if self.lent_by and foreground in (0, self.hwnd, self.lent_by):
             if seconds_idle() > time.monotonic() - self.lent_at:
                 self.stay_under(self.lent_by)
                 return
@@ -392,6 +405,7 @@ class WindowInput:
             # They came back, or moved to another window: theirs until they pause
             if self.lent_by:
                 self.give_back()
+                await self.until_raised_again()
             self.idle_waited = await wait_for_idle(self.idle_waited)
             await self.check_showing()
             foreground = user32.GetForegroundWindow()
@@ -399,16 +413,23 @@ class WindowInput:
             self.end_loan()
         elif same_firefox(foreground, self.hwnd):
             await self.borrow_activation(foreground)
+            # The person may have moved during the settling
+            await self.make_active()
         else:
-            # Another program is in front, so what was borrowed needs no returning
+            # Another program is in front, so what was borrowed needs no returning,
+            # though Windows will have told Firefox this window is inactive too
+            settle = not self.made_active or self.lent_by
             self.end_loan()
-            if not self.made_active:
-                self.made_active = True
-                pending = activated.pop(self.hwnd, None)
-                if pending:
-                    pending.cancel()
-                self.post(WM_ACTIVATE, WA_ACTIVE, 0)
+            self.made_active = True
+            pending = activated.pop(self.hwnd, None)
+            if pending:
+                pending.cancel()
+            # Each time: another server's timer may have stepped this window down,
+            # and Firefox ignores it when already active
+            self.post(WM_ACTIVATE, WA_ACTIVE, 0)
+            if settle:
                 await asyncio.sleep(ACTIVATE_SETTLE_S)
+                await self.make_active()
 
     async def borrow_activation(self, theirs: int):
         """The person is in another window of this Firefox, which has one active
@@ -439,6 +460,14 @@ class WindowInput:
     def give_back(self):
         hand_back(self.hwnd, self.lent_by)
         self.end_loan()
+
+    async def until_raised_again(self):
+        """Firefox makes their window active as soon as it reads the message, and
+        reading the foreground before Windows catches up would make this window
+        look active when keys sent to it would reach theirs"""
+        deadline = time.monotonic() + GIVE_BACK_WAIT_S
+        while user32.GetForegroundWindow() == self.hwnd and time.monotonic() < deadline:
+            await asyncio.sleep(GIVE_BACK_POLL_S)
 
     async def check_showing(self):
         if self.still_showing and not await self.still_showing():
@@ -645,7 +674,8 @@ class WindowInput:
             self.post(WM_CHAR, ord(char), 1)
             sent += 1
             if sent % batch == 0:
-                await self.make_active()
+                # The check comes last, right before the next batch goes
                 await asyncio.sleep(STEP_S)
+                await self.make_active()
         await asyncio.sleep(STEP_S)
 

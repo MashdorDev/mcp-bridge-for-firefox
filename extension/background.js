@@ -1174,6 +1174,7 @@ async function navigated(tabId, go) {
 let agentWindowId = null;
 const shownInsteadOf = new Map();  // agent tab -> { previous: the person's tab, token: the action, socket: its server }
 let agentWindowTurn = Promise.resolve();
+const prefacedWindows = new Set();
 
 // The title's prefix tells the server, and the person, which window this is. It
 // also means a page's title alone can never match it to one of theirs.
@@ -1183,16 +1184,14 @@ async function currentAgentWindow() {
   if (agentWindowId === null) {
     // Kept over a reload of the add-on, which clears session storage: tabs of a
     // window it lost track of would be looked for by their bare page title.
-    // Window ids mean nothing after a restart, so that clears it.
+    // Window ids restart with Firefox, so the id only counts with the title:
+    // it could be one of the person's windows now.
     const stored = await browser.storage.local.get({ agentWindowId: null }).catch(() => ({}));
-    agentWindowId = stored.agentWindowId ?? null;
+    const window = stored.agentWindowId != null && await browser.windows.get(stored.agentWindowId).catch(() => null);
+    if (window && (window.title || '').startsWith(AGENT_WINDOW_PREFACE)) agentWindowId = stored.agentWindowId;
   }
   return agentWindowId !== null && await browser.windows.get(agentWindowId).catch(() => null);
 }
-
-browser.runtime.onStartup.addListener(() => {
-  browser.storage.local.remove('agentWindowId').catch(() => {});
-});
 
 // One at a time, or two tabs opening at once would make two windows
 function tabInAgentWindow(options) {
@@ -1221,6 +1220,15 @@ async function showForRealInput(data, socket) {
   const tab = await browser.tabs.get(data.tabId);
   data.windowId = tab.windowId;
   data.agentWindow = Boolean(await currentAgentWindow()) && tab.windowId === agentWindowId;
+  // A profile set aside for agents has no agent window, but the same title as a
+  // window of the person's in their own Firefox must not pass for this one
+  if (settings.agentProfile) {
+    data.agentWindow = true;
+    if (!prefacedWindows.has(tab.windowId)) {
+      await browser.windows.update(tab.windowId, { titlePreface: AGENT_WINDOW_PREFACE });
+      prefacedWindows.add(tab.windowId);
+    }
+  }
   let entry = shownInsteadOf.get(data.tabId);
   // Left by an action that never finished. Still showing, it still owes the
   // person their tab; if they have since moved on, it owes nothing.

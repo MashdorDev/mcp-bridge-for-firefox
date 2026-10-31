@@ -128,6 +128,8 @@ async def test_an_agent_profile_does_not_pull_work_out_of_a_browser_in_use(serve
         server.note_agent_tab(None, 12)
         await hello(agent, "bbbb2222", "Agents", agent_profile=True)
         assert server.active_browser == "aaaa1111"
+        await hello(agent, "bbbb2222", "Agents", agent_profile=True)
+        assert server.active_browser == "aaaa1111"
 
 
 @pytest.mark.asyncio

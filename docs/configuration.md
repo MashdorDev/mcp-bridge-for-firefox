@@ -11,7 +11,7 @@ Firefox has one active window per process, so while you use a Firefox window, re
 3. Install the add-on there, and in its settings tick **This Firefox is for agents**.
 4. Log in there to the sites agents need.
 
-Agents then act in that profile, and `browsers_list` marks it `[agent profile]`. `browsers_select` still chooses another browser by name or id, and that choice sticks.
+Agents then act in that profile, its windows' titles start with `[Agent]`, and `browsers_list` marks it `[agent profile]`. `browsers_select` still chooses another browser by name or id, and that choice sticks.
 
 ## Setup
 

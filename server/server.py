@@ -212,6 +212,8 @@ class FoxMCPServer:
         # per browser, because requests follow the active browser, which
         # browsers_select can change mid-call.
         self.real_input_turn = asyncio.Lock()
+        # Browsers agents have acted in, connected or dropped for a moment
+        self.browsers_in_use = set()
 
         # In stdio mode the MCP side has no listener, so there is no port to pick.
         # Running the selection anyway would bind-test a port nothing serves and
@@ -474,7 +476,7 @@ class FoxMCPServer:
         by name or work has begun elsewhere: tab ids mean nothing in another profile"""
         active = self.browsers.get(self.active_browser)
         if (browser.agent_profile and browser.key and not self.browser_chosen and active is not browser
-                and (active is None or (active.last_tab is None and not active.agent_profile))):
+                and self.active_browser not in self.browsers_in_use and not (active and active.agent_profile)):
             self.active_browser = browser.key
             self.active_browser_name = browser.name
 
@@ -679,9 +681,12 @@ class FoxMCPServer:
 
     async def send_to_extension(self, message: Dict[str, Any]) -> bool:
         """Send message to browser extension"""
-        # An action's own browser, when others may have become active since
-        pinned = self.browsers.get(message.pop('to_browser', None))
-        target = pinned.websocket if pinned else self._socket_for(message)
+        # An action's own browser, or nobody: a tab id means nothing in another
+        if 'to_browser' in message:
+            pinned = self.browsers.get(message.pop('to_browser'))
+            target = pinned.websocket if pinned else None
+        else:
+            target = self._socket_for(message)
         if not target:
             logger.warning("No extension connection available")
             return False
@@ -708,6 +713,8 @@ class FoxMCPServer:
         agent_call = AGENT_CALL.get()
         if agent_call and 'agent' not in request:
             request = {**request, 'agent': agent_call}
+        if agent_call:
+            self.browsers_in_use.add(self.active_browser)
 
         # Create future for response
         response_future = asyncio.Future()
@@ -794,6 +801,7 @@ class FoxMCPServer:
             self.agent_tabs[int(tab_id)] = session_id or self.NO_MCP_SESSION
         except (TypeError, ValueError):
             return
+        self.browsers_in_use.add(self.active_browser)
         browser = self.browsers.get(self.active_browser)
         if browser:
             browser.last_tab = int(tab_id)

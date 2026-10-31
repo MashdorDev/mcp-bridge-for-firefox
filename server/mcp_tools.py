@@ -73,6 +73,8 @@ SCRIPTED_ONLY = object()
 TEXT_LIMIT = 20000
 # Why this call has no real input, for the refusal to say which case it is
 REAL_INPUT_MISS = contextvars.ContextVar("real_input_miss", default="")
+# The browser a real input action began in: tab ids mean nothing in any other
+REAL_INPUT_BROWSER = contextvars.ContextVar("real_input_browser", default=None)
 # Firefox updates a window's title and a tab's visibility shortly after activating it
 WINDOW_SETTLE_DELAYS = (0.2, 0.4, 0.8)
 # How long after this server starts an add-on may take to find it: the add-on
@@ -902,6 +904,10 @@ class FoxMCPTools:
 
             if response.get("type") == "response" and "data" in response:
                 tab = response["data"].get("tab", {})
+                # What a later call with no tab means, rather than the person's tab
+                note_agent_tab = getattr(self.websocket_server, 'note_agent_tab', None)
+                if note_agent_tab and tab.get('id') is not None:
+                    note_agent_tab(self._session_id(), tab['id'])
                 where = ", in the agent's own window: tabs_switch shows it to the person" if response["data"].get("agentWindow") else ""
                 return f"Created tab: ID {tab.get('id')} - {tab.get('title', 'Loading...')} - {tab.get('url', url)}{where}"
 
@@ -2465,10 +2471,12 @@ class FoxMCPTools:
 
             Returns (data, None) on success and (None, error message) on failure.
             """
+            pinned = REAL_INPUT_BROWSER.get()
             response = await self.websocket_server.send_request_and_wait({
                 "id": str(uuid.uuid4()),
                 "type": "request",
                 **message,
+                **({"to_browser": pinned} if pinned else {}),
                 "timestamp": datetime.now().isoformat()
             })
             if "error" in response:
@@ -2526,23 +2534,24 @@ class FoxMCPTools:
                 REAL_INPUT_MISS.set("no browser is connected right now" if not getattr(server, 'extension_connection', None)
                                     else "real input is off in this browser's add-on settings")
                 return None
-            async with server.real_input_turn:
-                # The browser this began in, whichever becomes active meanwhile
-                browser = server.active_browser
-                try:
+            # Whichever browser becomes active while this waits or runs
+            pinned = REAL_INPUT_BROWSER.set(server.active_browser)
+            try:
+                async with server.real_input_turn:
                     async with machine_turn():
                         try:
-                            return await real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name, browser)
+                            return await real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name)
                         finally:
                             if WINDOW_INPUT:
-                                await page_request({"action": "content.real_input_done", "data": {"tabId": tab_id},
-                                                    "to_browser": browser})
-                except WindowInputUnavailable as unavailable:
-                    logger.info(f"No window input: {unavailable}")
-                    REAL_INPUT_MISS.set(str(unavailable))
-                    return None
+                                await page_request({"action": "content.real_input_done", "data": {"tabId": tab_id}})
+            except WindowInputUnavailable as unavailable:
+                logger.info(f"No window input: {unavailable}")
+                REAL_INPUT_MISS.set(str(unavailable))
+                return None
+            finally:
+                REAL_INPUT_BROWSER.reset(pinned)
 
-        async def real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name, browser):
+        async def real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name):
             server = self.websocket_server
             ports = []
             if server.real_input_allowed():
@@ -2590,7 +2599,7 @@ class FoxMCPTools:
                 return prep, None
 
             async def still_showing():
-                data, error = await page_request({"action": "content.real_input_showing", "to_browser": browser,
+                data, error = await page_request({"action": "content.real_input_showing",
                                                   "data": {"tabId": tab_id, "windowId": prep.get("windowId")}})
                 return not error and data.get("showing")
 

@@ -236,12 +236,12 @@ async def test_keys_make_a_background_window_active_and_it_steps_down_later(monk
     posted = fake_windows(monkeypatch, foreground=99)
     async with WindowInput(PREP) as window:
         await window.make_active()
-        await window.make_active()
-        assert posted == [ACTIVE]
+        assert set(posted) == {ACTIVE}
+    posted.clear()
     # The timer itself is asyncio: what matters is what it does when it fires
     win_input.activated[7].cancel()
     win_input.step_down(7)
-    assert posted == [ACTIVE, INACTIVE]
+    assert posted == [INACTIVE]
     assert not win_input.activated
 
 
@@ -259,9 +259,10 @@ async def test_activation_is_posted_again_even_with_a_step_down_pending(monkeypa
     posted = fake_windows(monkeypatch, foreground=99)
     async with WindowInput(PREP) as window:
         await window.make_active()
+    first = len(posted)
     async with WindowInput(PREP) as window:
         await window.make_active()
-    assert posted == [ACTIVE, ACTIVE]
+    assert first and len(posted) > first and set(posted) == {ACTIVE}
     win_input.activated[7].cancel()
     win_input.activated.clear()
 
@@ -302,11 +303,12 @@ async def test_with_the_person_busy_in_this_firefox_their_window_is_not_lowered(
 async def test_the_person_coming_back_mid_typing_gets_activation_back(monkeypatch):
     posted = fake_windows(monkeypatch, foreground=99, same_firefox=True)
     monkeypatch.setattr(win_input, 'SWAP_SETTLE_S', 0)
-    idle = iter([60, 0, 60, 60])
-    monkeypatch.setattr(win_input, 'seconds_idle', lambda: next(idle))
+    idle = [60]
+    monkeypatch.setattr(win_input, 'seconds_idle', lambda: idle.pop(0) if len(idle) > 1 else idle[0])
     monkeypatch.setattr(win_input, 'IDLE_POLL_S', 0)
     async with WindowInput(PREP) as window:
         await window.make_active()
+        idle[:] = [0, 60]
         await window.make_active()
         assert posted[2:4] == [INACTIVE, (99, win_input.WM_ACTIVATE, win_input.WA_ACTIVE)]
         assert window.lent_by == 99
@@ -323,9 +325,48 @@ async def test_the_person_arriving_in_this_firefox_mid_action_stops_the_keys_goi
         monkeypatch.setattr(win_input, 'IDLE_WAIT_MAX_S', 0)
         with pytest.raises(WindowInputUnavailable):
             await window.make_active()
-    assert posted == [ACTIVE]
+    assert set(posted) == {ACTIVE}
     win_input.activated[7].cancel()
     win_input.activated.clear()
+
+
+@pytest.mark.asyncio
+async def test_a_moment_with_no_foreground_does_not_end_the_loan(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99, same_firefox=True)
+    monkeypatch.setattr(win_input, 'SWAP_SETTLE_S', 0)
+    monkeypatch.setattr(win_input, 'seconds_idle', lambda: 60)
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+        monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: 0, raising=False)
+        await window.make_active()
+        assert window.lent_by == 99
+    assert posted[2:] == [INACTIVE, (99, win_input.WM_ACTIVATE, win_input.WA_ACTIVE)]
+
+
+@pytest.mark.asyncio
+async def test_activation_is_taken_again_when_the_person_leaves_for_another_program(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99, same_firefox=True)
+    monkeypatch.setattr(win_input, 'SWAP_SETTLE_S', 0)
+    monkeypatch.setattr(win_input, 'seconds_idle', lambda: 60)
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+        monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: 55, raising=False)
+        monkeypatch.setattr(win_input, 'same_firefox', lambda one, other: one == other)
+        posted.clear()
+        await window.make_active()
+        assert window.lent_by == 0 and set(posted) == {ACTIVE}
+    win_input.activated[7].cancel()
+    win_input.activated.clear()
+
+
+@pytest.mark.asyncio
+async def test_an_untitled_page_in_the_agent_window_is_found_by_the_prefix(monkeypatch):
+    monkeypatch.setattr(win_input, 'firefox_windows', lambda minimised=False: [11, 22])
+    monkeypatch.setattr(win_input, 'window_title', lambda hwnd: {11: 'Mail', 22: '[Agent] Mozilla Firefox'}[hwnd])
+    monkeypatch.setattr(win_input.user32, 'GetWindowThreadProcessId', lambda hwnd, _: 1, raising=False)
+    prep = {'screen': {'x': 1, 'y': 1, 'dpr': 1, 'title': '', 'hidden': True}, 'agentWindow': True}
+    async with WindowInput(prep) as window:
+        assert window.hwnd == 22
 
 
 @pytest.mark.asyncio
