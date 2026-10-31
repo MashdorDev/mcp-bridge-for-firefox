@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A profile keeps its default name on every server.** A profile with no name set was named "Firefox N" by the order it connected, so the same profile could be "Firefox 1" on one server and "Firefox 2" on another. The name now comes from the profile's own id. Names you set are unchanged.
+- **`browsers_select` fails as a failure.** An unknown name came back as an ordinary answer, which repeats the name, so a check on the reply could pass.
+
 ## [1.13.0] - 2026-10-30
 
 ### Fixed
