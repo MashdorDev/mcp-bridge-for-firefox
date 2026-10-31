@@ -58,7 +58,7 @@ jobs:
 
       - name: Run the suite
         env:
-          PYTEST_ADDOPTS: --junitxml=${{ runner.temp }}/junit.xml
+          PYTEST_ADDOPTS: --durations=40 --durations-min=1.0 --junitxml=${{ runner.temp }}/junit.xml
         run: make test
 
       # A green run is only meaningful if the tests actually ran. Anything the
