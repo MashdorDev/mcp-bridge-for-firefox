@@ -136,14 +136,15 @@ let loggedDown = false;
 // several Firefox profiles apart. Kept in storage.local, never storage.sync:
 // Firefox Sync would copy a synced id or name to every profile on the account.
 async function browserIdentity() {
-  const stored = await browser.storage.local.get({ instanceId: '', browserName: '', realInput: true, realInputPort: 0 });
+  const stored = await browser.storage.local.get({ instanceId: '', browserName: '', realInput: true, realInputPort: 0, agentProfile: false });
   let instanceId = stored.instanceId;
   if (!instanceId) {
     instanceId = crypto.randomUUID();
     await browser.storage.local.set({ instanceId });
   }
   return { instance_id: instanceId, name: stored.browserName, version: browser.runtime.getManifest().version,
-    real_input: Boolean(stored.realInput), real_input_port: Number(stored.realInputPort) || 0 };
+    real_input: Boolean(stored.realInput), real_input_port: Number(stored.realInputPort) || 0,
+    agent_profile: Boolean(stored.agentProfile) };
 }
 
 async function sendHello(socket) {
@@ -196,7 +197,7 @@ async function handleHelloAck(socket, data) {
 browser.storage.onChanged.addListener((changes, area) => {
   // Every server this browser is connected to learns its new name or
   // real-input port, and pairs again with a new token
-  if (area === 'local' && (changes.browserName || changes.realInput || changes.realInputPort || changes.pairingToken)) {
+  if (area === 'local' && (changes.browserName || changes.agentProfile || changes.realInput || changes.realInputPort || changes.pairingToken)) {
     sendHello(websocket);
     for (const socket of extraSockets.values()) sendHello(socket);
   }
@@ -843,7 +844,7 @@ async function handleTabsAction(id, action, data) {
           createTabOptions.pinned = data.pinned;
         }
         
-        const newTab = !data.windowId && !settings.followAgent
+        const newTab = !data.windowId && !settings.followAgent && !settings.agentProfile
           ? await tabInAgentWindow(createTabOptions)
           : await browser.tabs.create(createTabOptions);
         const call = agentCalls.get(id);

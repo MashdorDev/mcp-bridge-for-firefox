@@ -2140,6 +2140,7 @@ class FoxMCPTools:
                 version = f", add-on {browser.version}" if browser.version else ", add-on older than 1.4.3"
                 minutes = int((time.time() - browser.connected_at) // 60)
                 app = " [Thunderbird]" if browser.app == 'thunderbird' else ""
+                app += " [agent profile]" if getattr(browser, 'agent_profile', False) else ""
                 paired = ", paired" if getattr(browser, 'paired', False) else ""
                 lines.append(f"- {browser.name}{app}{active}: id {browser.key[:8]}{version}{paired}, "
                              f"connected {minutes} min ago")

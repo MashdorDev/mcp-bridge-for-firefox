@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **An agent profile.** Tick "This Firefox is for agents" in a separate Firefox profile and agents act there unless one is chosen by name. In its own process, real typing never touches the windows you are using, with no blink and no wait. See `docs/configuration.md`.
+
 ### Fixed
 - **Keys no longer click a field that already has the focus.** `content_press_key` with a target clicked it first, every time, so `Control+a` followed by `Backspace` deleted one character instead of the selection.
 - **"Show me the tab the agent works in" off now means it.** Real input brought the agent's tab forward anyway, because window input only reaches the tab showing. With the setting off, tabs the agent opens go in a window of their own, opened without focus, and a tab it uses in your window is shown only for the action, then yours comes back. The agent's window has `[Agent]` in its title. If you are using another window of that Firefox, keys wait for you to pause for 2 s, for up to 10 s, then borrow its activation for just that action.

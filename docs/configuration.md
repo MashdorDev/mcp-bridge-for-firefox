@@ -2,6 +2,17 @@
 
 How to set up, run and configure the MCP Bridge for Firefox server and add-on.
 
+## Agent profile
+
+Firefox has one active window per process, so while you use a Firefox window, real keys for another window of the same Firefox have to wait for you to pause and briefly borrow its activation. A second profile runs as its own process and has neither problem.
+
+1. Create it: `firefox.exe -CreateProfile Agents`
+2. Start it alongside your own: `firefox.exe -P Agents --no-remote`
+3. Install the add-on there, and in its settings tick **This Firefox is for agents**.
+4. Log in there to the sites agents need.
+
+Agents then act in that profile, and `browsers_list` marks it `[agent profile]`. `browsers_select` still chooses another browser by name or id, and that choice sticks.
+
 ## Setup
 
 The server runs inside your AI client, which starts it when a session starts

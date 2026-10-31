@@ -41,9 +41,9 @@ def uri(server):
     return f"ws://localhost:{server.port}"
 
 
-async def hello(ws, instance_id, name):
+async def hello(ws, instance_id, name, **more):
     await ws.send(json.dumps({"id": f"hello_{instance_id}", "type": "hello", "action": "browser.hello",
-                              "data": {"instance_id": instance_id, "name": name, "version": "1.4.3"}}))
+                              "data": {"instance_id": instance_id, "name": name, **more, "version": "1.4.3"}}))
     await asyncio.sleep(0.2)
 
 
@@ -96,6 +96,18 @@ async def test_an_unnamed_profile_is_named_from_its_id_not_its_order(server):
         await hello(second, "bbbb2222", "")
         await ping(server)
         assert sorted(b.name for b in server.browsers.values()) == ["Firefox aaaa", "Firefox bbbb"]
+
+
+@pytest.mark.asyncio
+async def test_an_agent_profile_is_preferred_until_one_is_chosen(server):
+    async with connect_as_extension(uri(server)) as main, connect_as_extension(uri(server)) as agent:
+        await hello(main, "aaaa1111", "Main")
+        assert server.active_browser == "aaaa1111"
+        await hello(agent, "bbbb2222", "Agents", agent_profile=True)
+        assert server.active_browser == "bbbb2222", "an agent profile should take over"
+        server.select_browser("Main")
+        await hello(agent, "bbbb2222", "Agents", agent_profile=True)
+        assert server.active_browser == "aaaa1111", "a browser chosen by name stays chosen"
 
 
 @pytest.mark.asyncio

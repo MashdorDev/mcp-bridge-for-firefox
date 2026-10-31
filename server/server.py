@@ -168,6 +168,8 @@ class BrowserConnection:
     connected_at: float = field(default_factory=time.time)
     # Real input through WebDriver BiDi: whether the person allows it, the port
     # they set (0: find it), and the port it was last found on
+    # The person set this Firefox aside for agents
+    agent_profile: bool = False
     real_input: bool = False
     real_input_port: int = 0
     real_input_found: int = 0
@@ -425,6 +427,7 @@ class FoxMCPServer:
             return
         browser.version = str(data.get('version') or '')
         browser.said_hello = True
+        browser.agent_profile = bool(data.get('agent_profile'))
         browser.real_input = bool(data.get('real_input'))
         browser.real_input_missed_at = 0.0  # the person may just have set it up
         try:
@@ -458,7 +461,9 @@ class FoxMCPServer:
             if key == browser.key:
                 self.monitor_browsers[monitor_id] = instance_id
         browser.key = instance_id
-        if was_active or (self.active_browser not in self.browsers and self._may_take_over()):
+        # A profile set aside for agents is where they act, unless one was chosen by name
+        preferred = browser.agent_profile and not self.browser_chosen
+        if was_active or preferred or (self.active_browser not in self.browsers and self._may_take_over()):
             self.active_browser = instance_id
         if self.active_browser == instance_id:
             self.active_browser_name = browser.name
