@@ -2,6 +2,12 @@
 
 How to set up, run and configure the MCP Bridge for Firefox server and add-on.
 
+## Automation prefs left in a profile
+
+Starting Firefox with `--remote-debugging-port` writes Mozilla's test prefs into that profile for good: no add-on or Firefox updates, no blocklist, and dummy addresses for addons.mozilla.org, telemetry and Firefox Accounts. Window input on Windows needs no such flag. If you use the flag in a profile you keep, put `user_pref("remote.prefs.recommended", false);` in its `user.js` first.
+
+To clean a profile that already has them, close that Firefox and run `python scripts/clean-automation-prefs.py <profile folder>` to see what would go, then again with `--apply`. It keeps a backup of `prefs.js` next to it.
+
 ## Agent profile
 
 Firefox has one active window per process, so while you use a Firefox window, real keys for another window of the same Firefox have to wait for you to pause and briefly borrow its activation. While it borrows, about 0.4 s for a short text, the agent's window holds the Windows foreground from underneath yours: your title bar dims and your page sees a blur and a focus. A second profile runs as its own process and has neither problem.

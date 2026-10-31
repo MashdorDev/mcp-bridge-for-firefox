@@ -108,6 +108,7 @@ it, which keeps the tool list shorter.
 - `content_dialogs(tab_id)` - The dialogs open on a page with their buttons, including an invisible one or a backdrop taking the page's clicks
 - `content_select_option(tab_id, option, ref=None, selector=None, text=None, timeout=5)` - Choose an option in a native or custom dropdown
 - `page_fetch_json(tab_id, path, max_length=20000)` - Read-only GET to the page's own origin, with its sign-in. Needs "Run scripts" in the add-on's settings
+- `content_execute_script` takes `page_realm=True` to run among the page's own scripts, for page objects the isolated realm can't iterate, unless the page's security policy forbids it
 - `content_scroll(tab_id, delta_y=600, delta_x=0, ref=None, selector=None, x=None, y=None, text=None)` - Scroll whatever scrolls at an element or point, including inner containers
 - `content_hover(tab_id, ref=None, selector=None, x=None, y=None, text=None)` - Move the mouse onto an element or a point without clicking
   - Opens hover menus and shows tooltips or buttons that only appear on hover

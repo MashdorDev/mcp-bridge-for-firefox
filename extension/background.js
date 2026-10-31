@@ -982,6 +982,11 @@ async function handleTabsAction(id, action, data) {
         let wantedTab = null;
         if (data.tabId != null) {
           wantedTab = await browser.tabs.get(Number(data.tabId)).catch(() => null);
+          // What comes back is a blurred thumbnail, which reads as a real capture
+          if (wantedTab && wantedTab.url.startsWith('moz-extension://') && !wantedTab.url.startsWith(browser.runtime.getURL(''))) {
+            sendError(id, 'CAPTURE_ERROR', 'Firefox keeps other add-ons\' pages from add-ons, so this tab can\'t be captured');
+            break;
+          }
           if (!wantedTab && !data.tabIdOptional) {
             sendError(id, 'CAPTURE_ERROR', `No tab with id ${data.tabId}`);
             break;
@@ -1381,7 +1386,7 @@ async function sendMessageWithRetry(tabId, message, maxRetries = 5, delayMs = 20
       // Skip status check for now and try to send message
       // The content script should be available on all URLs except chrome:// pages
       if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('moz-extension://'))) {
-        throw new Error('Cannot access content script on system pages');
+        throw new Error('Firefox keeps its own pages and other add-ons\' pages from add-ons, so this tab can\'t be read or driven');
       }
 
       const result = await browser.tabs.sendMessage(tabId, message);
@@ -1413,6 +1418,17 @@ async function sendMessageWithRetry(tabId, message, maxRetries = 5, delayMs = 20
 const pendingUploads = new Map();
 
 // Content handlers
+// Evaluated by the page, whose values reach here only through JSON. Awaited, as
+// the page's own promises can't be returned across.
+function pageRealmCode(script) {
+  return `(async () => {
+    const page = window.wrappedJSObject;
+    const value = await page.eval(${JSON.stringify(script)});
+    const json = page.JSON.stringify(value);
+    return json === undefined ? undefined : JSON.parse(json);
+  })()`;
+}
+
 async function handleContentAction(id, action, data) {
   try {
     switch (action) {
@@ -1445,7 +1461,8 @@ async function handleContentAction(id, action, data) {
           const strict = /^\s*(['"])use strict\1/.test(script) ? '"use strict";' : '';
           let executeResults;
           try {
-            executeResults = await browser.tabs.executeScript(data.tabId, { code: `${strict}{\n${script}\n}` });
+            executeResults = await browser.tabs.executeScript(data.tabId, data.pageRealm
+              ? { code: pageRealmCode(script) } : { code: `${strict}{\n${script}\n}` });
           } catch (error) {
             if (/return not in function|await .*is only valid/.test(error.message)) {
               executeResults = await browser.tabs.executeScript(data.tabId, {

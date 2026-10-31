@@ -80,6 +80,8 @@ WINDOW_SETTLE_DELAYS = (0.2, 0.4, 0.8)
 # content_wait_for: how often it looks, and the longest a caller can ask for
 WAIT_POLL_S = 0.25
 WAIT_MAX_S = 120.0
+# A click on one of these is the agent copying, by way of the page's own button
+COPY_BUTTON = re.compile(r'\bcop(y|ied)\b|העתק', re.IGNORECASE)
 # How long after this server starts an add-on may take to find it: the add-on
 # retries every 5 s, or every 30 s once it has been failing for a while
 RECONNECT_WINDOW_S = 35
@@ -2433,7 +2435,7 @@ class FoxMCPTools:
 
         # Execute Script Tool
         @self._tool()
-        async def content_execute_script(tab_id: int, code: str) -> str:
+        async def content_execute_script(tab_id: int, code: str, page_realm: bool = False) -> str:
             """Execute JavaScript code in a tab
 
             The result is the value of the last expression. A script with a
@@ -2441,9 +2443,14 @@ class FoxMCPTools:
             then only `return` gives a result. `let`, `const` and `class` names
             are gone in the next call; `var` and `function` ones stay.
 
+            It runs apart from the page's own scripts, which can't see its names,
+            and some page objects can't be iterated from there. page_realm runs it
+            as the page does, unless the page's security policy forbids it.
+
             Args:
                 tab_id: ID of the tab to execute script in
                 code: JavaScript code to execute
+                page_realm: Run it among the page's own scripts (default: False)
             """
             request = {
                 "id": str(uuid.uuid4()),
@@ -2451,7 +2458,8 @@ class FoxMCPTools:
                 "action": "content.execute_script",
                 "data": {
                     "tabId": tab_id,
-                    "script": code
+                    "script": code,
+                    "pageRealm": page_realm
                 },
                 "timestamp": datetime.now().isoformat()
             }
@@ -2954,6 +2962,7 @@ class FoxMCPTools:
                 if error:
                     return f"Failed to click: {error}"
                 return f"{done} {data.get('clicked')}{effect_of(data)}"
+            copy_before = clipboard_sequence() if WINDOW_INPUT else None
             real = await real_input(tab_id, ref, selector, "click", lambda bidi, context, element:
                                     bidi.click(context, element, button=2 if right_click else 0,
                                                clicks=2 if double_click and not right_click else 1),
@@ -2962,7 +2971,8 @@ class FoxMCPTools:
                 prep, error = real
                 if error:
                     return f"Failed to click: {error}"
-                return f"{done} {prep.get('target')} (real input){await click_effect(tab_id, prep)}"
+                copied = await note_copy(copy_before) if copy_before is not None and COPY_BUTTON.search(str(prep.get('target'))) else ""
+                return f"{done} {prep.get('target')} (real input){await click_effect(tab_id, prep)}{copied}"
             if refusal := scripted_refusal("click"):
                 return refusal
             data, error = await page_request({

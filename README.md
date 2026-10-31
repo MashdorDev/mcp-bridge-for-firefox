@@ -124,6 +124,23 @@ Use it with AI clients you trust, and consider a separate Firefox profile for ag
 - Pages Firefox protects from add-ons (`about:` pages, addons.mozilla.org) can't be driven.
 - Uploads stream through the local connection in 512 KB chunks: fine for project files, slow for multi-gigabyte ones.
 
+## Permission prompts in Claude Code
+
+Auto mode judges each call by what it can see, so a raw script gets the worst reading, and one refusal makes it stricter on the next few calls. The named tools (`content_read`, `content_wait_for`, `content_dialogs`, `content_select_option`, `page_fetch_json`) cover most of what scripts were used for. For the rest, ask rules are checked first, so you get a prompt in place of a refusal:
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "mcp__firefox__content_execute_script",
+      "mcp__firefox__content_click",
+      "mcp__firefox__content_type",
+      "mcp__firefox__content_press_key"
+    ]
+  }
+}
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE). Copyright notices from FoxMCP are kept in the source files.
