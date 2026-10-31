@@ -74,7 +74,7 @@ class TestMCPProtocolCompliance:
         ) as firefox:
             assert firefox.setup_and_start_firefox(headless=True, skip_on_failure=False)
             connected = await firefox.async_wait_for_extension_connection(
-                timeout=FIREFOX_TEST_CONFIG['extension_install_wait'] + 5.0,
+                timeout=FIREFOX_TEST_CONFIG['extension_connect_timeout'] + 5.0,
                 server=full_mcp_system['server']
             )
             assert connected, "The extension should connect to the test server"

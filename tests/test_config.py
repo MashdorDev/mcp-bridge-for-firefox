@@ -24,7 +24,10 @@ DEFAULT_TEST_CONFIG = {
 FIREFOX_TEST_CONFIG = {
     'profile_name': 'foxmcp-test-profile',
     'extension_install_wait': 3.0,  # Time for extension to install and connect
-    'firefox_startup_wait': 5.0,    # Time for Firefox to fully start
+    # Long enough to see a Firefox that exits at once. Waiting for it to be ready is
+    # the connection timeout's job: a fixed 5 s here was most of the suite's run time.
+    'firefox_startup_wait': 0.5,
+    'extension_connect_timeout': 20.0,  # Most to wait for the add-on, which is polled
 }
 
 def get_test_ports(suite_name):
