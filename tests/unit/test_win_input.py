@@ -154,6 +154,7 @@ async def test_another_firefox_window_at_the_same_spot_is_never_used(monkeypatch
 @pytest.mark.parametrize('window, page, shows', [
     ('Inbox \u2014 Mozilla Firefox', 'Inbox', True),
     ('Inbox - Mozilla Firefox', 'Inbox', True),
+    ('Inbox — Original profile — Mozilla Firefox', 'Inbox', True),
     ('Inbox', 'Inbox', True),
     ('Inbox - Draft to boss \u2014 Mozilla Firefox', 'Inbox', False),
     ('Home Depot \u2014 Mozilla Firefox', 'Home', False),

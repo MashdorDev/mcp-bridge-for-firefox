@@ -1610,8 +1610,11 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
             if (el && data.purpose === 'click') pendingClicks.get(data.token).covered = coverOf(el);
             // The first line of a link that wraps, as for the cover check
             const rect = el && (el.getClientRects()[0] || el.getBoundingClientRect());
+            // A key for a field that has the focus needs no click, which would
+            // lose the selection and move the caret: Control+a, then Backspace
+            const keyOnly = data.purpose === 'key' && el && (el === document.activeElement || el.contains(document.activeElement));
             sendResponse(el ? {
-              selector: `[${REF_ATTR}="${refFor(el)}"]`, target: describe(el), screen: screenInfo(),
+              selector: keyOnly ? undefined : `[${REF_ATTR}="${refFor(el)}"]`, target: describe(el), screen: screenInfo(),
               // Real input would click a <select> open into the browser's own
               // list, where typed keys do not reach the page
               scripted: data.purpose === 'type' && el instanceof HTMLSelectElement,

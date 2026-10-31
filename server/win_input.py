@@ -179,11 +179,12 @@ if AVAILABLE:
 
 def shows_page(window: str, page: str) -> bool:
     """Whether a window's title is this page's title and nothing else but the
-    browser's name: a tab called "Inbox - Draft" must not pass for "Inbox" """
+    browser's name, after the profile's if it has one ("Page — Work — Mozilla
+    Firefox"): a tab called "Inbox - Draft" must not pass for "Inbox" """
     if not page or not window.startswith(page):
         return False
     rest = window[len(page):]
-    return not rest or re.fullmatch(r' [\u2014\u2013-] [^\u2014\u2013-]*', rest) is not None
+    return not rest or re.fullmatch(r' (— [^—]+( — [^—]+)?|[–-] [^—–-]*)', rest) is not None
 
 
 def hidden_window(title: str, x: int, y: int) -> int:
