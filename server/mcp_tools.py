@@ -73,8 +73,8 @@ SCRIPTED_ONLY = object()
 TEXT_LIMIT = 20000
 # Why this call has no real input, for the refusal to say which case it is
 REAL_INPUT_MISS = contextvars.ContextVar("real_input_miss", default="")
-# The browser a real input action began in: tab ids mean nothing in any other
-REAL_INPUT_BROWSER = contextvars.ContextVar("real_input_browser", default=None)
+# The browser a tool call on a tab began in: tab ids mean nothing in any other
+CALL_BROWSER = contextvars.ContextVar("call_browser", default=None)
 # Firefox updates a window's title and a tab's visibility shortly after activating it
 WINDOW_SETTLE_DELAYS = (0.2, 0.4, 0.8)
 # How long after this server starts an add-on may take to find it: the add-on
@@ -419,9 +419,12 @@ class FoxMCPTools:
             if kwargs.get('tab_id') is not None and note_agent_tab:
                 note_agent_tab(self._session_id(), kwargs['tab_id'])
             token = AGENT_CALL.set(call)
+            # Whichever browser becomes active while this waits or runs
+            pinned = CALL_BROWSER.set(getattr(self.websocket_server, 'active_browser', None))
             try:
                 return await fn(*args, **kwargs)
             finally:
+                CALL_BROWSER.reset(pinned)
                 AGENT_CALL.reset(token)
 
         status_param = inspect.Parameter(
@@ -2471,7 +2474,7 @@ class FoxMCPTools:
 
             Returns (data, None) on success and (None, error message) on failure.
             """
-            pinned = REAL_INPUT_BROWSER.get()
+            pinned = CALL_BROWSER.get()
             response = await self.websocket_server.send_request_and_wait({
                 "id": str(uuid.uuid4()),
                 "type": "request",
@@ -2534,8 +2537,6 @@ class FoxMCPTools:
                 REAL_INPUT_MISS.set("no browser is connected right now" if not getattr(server, 'extension_connection', None)
                                     else "real input is off in this browser's add-on settings")
                 return None
-            # Whichever browser becomes active while this waits or runs
-            pinned = REAL_INPUT_BROWSER.set(server.active_browser)
             try:
                 async with server.real_input_turn:
                     async with machine_turn():
@@ -2548,8 +2549,6 @@ class FoxMCPTools:
                 logger.info(f"No window input: {unavailable}")
                 REAL_INPUT_MISS.set(str(unavailable))
                 return None
-            finally:
-                REAL_INPUT_BROWSER.reset(pinned)
 
         async def real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name):
             server = self.websocket_server

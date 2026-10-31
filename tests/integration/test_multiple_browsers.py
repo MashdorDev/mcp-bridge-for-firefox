@@ -133,6 +133,16 @@ async def test_an_agent_profile_does_not_pull_work_out_of_a_browser_in_use(serve
 
 
 @pytest.mark.asyncio
+async def test_work_long_over_does_not_hold_an_agent_profile_back(server):
+    async with connect_as_extension(uri(server)) as main, connect_as_extension(uri(server)) as agent:
+        await hello(main, "aaaa1111", "Main")
+        server.note_agent_tab(None, 12)
+        server.browsers_used_at["aaaa1111"] -= 86400
+        await hello(agent, "bbbb2222", "Agents", agent_profile=True)
+        assert server.active_browser == "bbbb2222"
+
+
+@pytest.mark.asyncio
 async def test_two_agent_profiles_do_not_trade_places(server):
     async with connect_as_extension(uri(server)) as one, connect_as_extension(uri(server)) as two:
         await hello(one, "aaaa1111", "One", agent_profile=True)

@@ -22,6 +22,15 @@ browser.storage.onChanged.addListener((changes, area) => {
     for (const tabId of [...agentTabs.keys()]) releaseAgentTab(tabId);
     giveAllTabsBack();
   }
+  // Without the setting, the server looks for the page's title as it is
+  if (changes.agentProfile && !changes.agentProfile.newValue) {
+    prefacedWindows.clear();
+    browser.windows.getAll().then(windows => {
+      for (const { id } of windows) {
+        if (id !== agentWindowId) browser.windows.update(id, { titlePreface: '' }).catch(() => {});
+      }
+    }).catch(() => {});
+  }
 });
 
 
@@ -1219,9 +1228,11 @@ async function openTabInAgentWindow(options) {
 async function showForRealInput(data, socket) {
   const tab = await browser.tabs.get(data.tabId);
   data.windowId = tab.windowId;
-  data.agentWindow = Boolean(await currentAgentWindow()) && tab.windowId === agentWindowId;
+  const ownWindow = Boolean(await currentAgentWindow()) && tab.windowId === agentWindowId;
+  data.agentWindow = ownWindow;
   // A profile set aside for agents has no agent window, but the same title as a
-  // window of the person's in their own Firefox must not pass for this one
+  // window of the person's in their own Firefox must not pass for this one. The
+  // person can still be in it, logging in to a site, so its tabs are not free to show.
   if (settings.agentProfile) {
     data.agentWindow = true;
     if (!prefacedWindows.has(tab.windowId)) {
@@ -1237,7 +1248,7 @@ async function showForRealInput(data, socket) {
     if (entry) shownInsteadOf.set(data.tabId, entry);
     else shownInsteadOf.delete(data.tabId);
   }
-  if (!tab.active && !settings.followAgent && !data.agentWindow) {
+  if (!tab.active && !settings.followAgent && !ownWindow) {
     // The server waits for the person to pause first, and asks again
     if (!data.showNow) {
       data.needsShow = true;

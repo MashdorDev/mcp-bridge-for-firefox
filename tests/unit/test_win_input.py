@@ -331,16 +331,36 @@ async def test_the_person_arriving_in_this_firefox_mid_action_stops_the_keys_goi
 
 
 @pytest.mark.asyncio
-async def test_a_moment_with_no_foreground_does_not_end_the_loan(monkeypatch):
+async def test_a_moment_with_no_foreground_is_waited_out(monkeypatch):
     posted = fake_windows(monkeypatch, foreground=99, same_firefox=True)
     monkeypatch.setattr(win_input, 'SWAP_SETTLE_S', 0)
     monkeypatch.setattr(win_input, 'seconds_idle', lambda: 60)
     async with WindowInput(PREP) as window:
         await window.make_active()
-        monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: 0, raising=False)
+        foregrounds = [0, 0, 99]
+        monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: foregrounds.pop(0) if len(foregrounds) > 1 else 99, raising=False)
         await window.make_active()
-        assert window.lent_by == 99
-    assert posted[2:] == [INACTIVE, (99, win_input.WM_ACTIVATE, win_input.WA_ACTIVE)]
+        assert window.lent_by == 99 and len(posted) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_window_firefox_has_not_lowered_takes_no_keys(monkeypatch):
+    posted = fake_windows(monkeypatch, foreground=99, same_firefox=True)
+    monkeypatch.setattr(win_input, 'SWAP_SETTLE_S', 0)
+    monkeypatch.setattr(win_input, 'GIVE_BACK_WAIT_S', 0)
+    monkeypatch.setattr(win_input, 'seconds_idle', lambda: 60)
+    async with WindowInput(PREP) as window:
+        await window.make_active()
+        monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: 7, raising=False)
+    try:
+        assert 7 in win_input.not_yet_lowered
+        count = len(posted)
+        async with WindowInput(PREP) as window:
+            with pytest.raises(WindowInputUnavailable):
+                await window.press(None, 'Enter')
+        assert len(posted) == count
+    finally:
+        win_input.not_yet_lowered.clear()
 
 
 @pytest.mark.asyncio
@@ -410,8 +430,10 @@ async def test_firefox_raising_the_borrowing_window_does_not_end_the_loan(monkey
         monkeypatch.setattr(win_input.user32, 'GetForegroundWindow', lambda: 7, raising=False)
         await window.make_active()
         assert window.lent_by == 99 and len(posted) == 2
+        monkeypatch.setattr(win_input, 'GIVE_BACK_WAIT_S', 0)
     assert posted[2:] == [INACTIVE, (99, win_input.WM_ACTIVATE, win_input.WA_ACTIVE)]
     assert not win_input.on_loan
+    win_input.not_yet_lowered.clear()
 
 
 @pytest.mark.asyncio
