@@ -8,9 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`content_read` and `content_wait_for`.** The text of one element, and a wait for an element, text or title, which took a script or a whole page of text before.
+- **`content_dialogs`, `content_select_option` and `page_fetch_json`.** Open dialogs and what is stuck over a page, custom dropdowns, and a GET on the page's own origin, without a script.
 - **An agent profile.** Tick "This Firefox is for agents" in a separate Firefox profile and agents act there unless one is chosen by name. In its own process, real typing never touches the windows you are using, with no blink and no wait. See `docs/configuration.md`.
 
+### Added
+- **`page_realm` on `content_execute_script`**, for page objects the isolated realm can't iterate.
+
+- **`content_snapshot` says when a long list has more rows than are drawn**, where the page gives the count. `browsers_list` says whether real input is on.
+
 ### Fixed
+- **A page's own Copy button counts as the agent copying.** `content_paste` refused what it put on the clipboard as the person's. On Windows, with real input.
+- **Another add-on's page says it can't be captured.** It returned a blurred thumbnail that read as a capture.
 - **Real input stops when its target does.** The add-on is asked before every click, key and batch of text whether the tab still shows in its window and the agent isn't paused, and the foreground window is checked again. Once input has gone in, a stop is reported as a stop and never redone by another route. If something else switches the tab mid-text, at most 10 characters can reach the new tab.
 - **One real input at a time across all servers on a computer**, so one session handing activation back can't send another's text to the person's window.
 - **Keys no longer click a field that already has the focus.** `content_press_key` with a target clicked it first, every time, so `Control+a` followed by `Backspace` deleted one character instead of the selection.

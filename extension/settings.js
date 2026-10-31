@@ -57,11 +57,11 @@ const SETTINGS_DEFAULTS = {
 // Which permission each action needs. Actions not listed (ping, tabs.release,
 // the test suite's helpers) are always allowed.
 const ACTION_PERMISSIONS = {
-  allowRead: ['content.get_text', 'content.get_html', 'content.snapshot', 'tabs.captureVisibleTab'],
+  allowRead: ['content.get_text', 'content.get_html', 'content.snapshot', 'content.read', 'content.wait_check', 'content.dialogs', 'tabs.captureVisibleTab'],
   allowInteract: ['content.click', 'content.type', 'content.press_key', 'content.capture_file_input',
     'content.real_input_prep', 'content.check_typed', 'content.real_pointer_prep', 'content.scroll', 'content.hover', 'content.drag',
-    'content.click_effect', 'content.real_input_arrived'],
-  allowScripts: ['content.execute_script'],
+    'content.click_effect', 'content.real_input_arrived', 'content.find_option'],
+  allowScripts: ['content.execute_script', 'content.fetch_json'],
   allowUploads: ['content.upload_begin', 'content.upload_chunk', 'content.upload_finish'],
   allowClipboard: ['content.copy_image', 'content.paste', 'content.clipboard_fingerprint'],
   allowTabs: ['tabs.list', 'tabs.create', 'tabs.close', 'tabs.switch', 'tabs.move',

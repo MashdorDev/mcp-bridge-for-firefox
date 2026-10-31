@@ -982,6 +982,7 @@ async function handleTabsAction(id, action, data) {
         let wantedTab = null;
         if (data.tabId != null) {
           wantedTab = await browser.tabs.get(Number(data.tabId)).catch(() => null);
+
           if (!wantedTab && !data.tabIdOptional) {
             sendError(id, 'CAPTURE_ERROR', `No tab with id ${data.tabId}`);
             break;
@@ -992,6 +993,11 @@ async function handleTabsAction(id, action, data) {
         // hide it for the capture. Tabs without content.js simply have none.
         const [shownTab] = wantedTab ? [wantedTab] : await browser.tabs.query(
           windowId ? { active: true, windowId } : { active: true, currentWindow: true });
+        // What comes back is a blurred thumbnail, which reads as a real capture
+        if (shownTab && shownTab.url && shownTab.url.startsWith('moz-extension://') && !shownTab.url.startsWith(browser.runtime.getURL(''))) {
+          sendError(id, 'CAPTURE_ERROR', 'Firefox keeps other add-ons\' pages from add-ons, so this tab can\'t be captured');
+          break;
+        }
         const setOverlay = (visible) => shownTab
           ? browser.tabs.sendMessage(shownTab.id, { action: 'overlayVisibility', data: { visible } })
             .catch(() => {})
@@ -1381,7 +1387,7 @@ async function sendMessageWithRetry(tabId, message, maxRetries = 5, delayMs = 20
       // Skip status check for now and try to send message
       // The content script should be available on all URLs except chrome:// pages
       if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('moz-extension://'))) {
-        throw new Error('Cannot access content script on system pages');
+        throw new Error('Firefox keeps its own pages and other add-ons\' pages from add-ons, so this tab can\'t be read or driven');
       }
 
       const result = await browser.tabs.sendMessage(tabId, message);
@@ -1413,6 +1419,24 @@ async function sendMessageWithRetry(tabId, message, maxRetries = 5, delayMs = 20
 const pendingUploads = new Map();
 
 // Content handlers
+// Evaluated by the page, whose values reach here only through JSON. Awaited, as
+// the page's own promises can't be returned across.
+function pageRealmCode(script) {
+  const asFunction = `(async () => {\n${script}\n})()`;
+  return `(async () => {
+    const page = window.wrappedJSObject;
+    let value;
+    try {
+      value = await page.eval(${JSON.stringify(script)});
+    } catch (error) {
+      if (!/return not in function|await .*is only valid/.test(error.message)) throw error;
+      value = await page.eval(${JSON.stringify(asFunction)});
+    }
+    const json = page.JSON.stringify(value);
+    return json === undefined ? undefined : JSON.parse(json);
+  })()`;
+}
+
 async function handleContentAction(id, action, data) {
   try {
     switch (action) {
@@ -1445,8 +1469,11 @@ async function handleContentAction(id, action, data) {
           const strict = /^\s*(['"])use strict\1/.test(script) ? '"use strict";' : '';
           let executeResults;
           try {
-            executeResults = await browser.tabs.executeScript(data.tabId, { code: `${strict}{\n${script}\n}` });
+            executeResults = await browser.tabs.executeScript(data.tabId, data.pageRealm
+              ? { code: pageRealmCode(script) } : { code: `${strict}{\n${script}\n}` });
           } catch (error) {
+            // Never run again outside the page, where it would find nothing of the page's
+            if (data.pageRealm) throw error;
             if (/return not in function|await .*is only valid/.test(error.message)) {
               executeResults = await browser.tabs.executeScript(data.tabId, {
                 code: `(async () => {\n${script}\n})()`
@@ -1462,6 +1489,7 @@ async function handleContentAction(id, action, data) {
           const result = executeResults && executeResults.length > 0 ? executeResults[0] : null;
           sendResponse(id, action, { 
             result: result,
+            pageRealm: Boolean(data.pageRealm),
             url: await getCurrentTabUrl(data.tabId)
           });
         } catch (scriptError) {
@@ -1491,11 +1519,17 @@ async function handleContentAction(id, action, data) {
       case 'content.check_typed':
       case 'content.real_input_arrived':
       case 'content.snapshot':
+      case 'content.read':
+      case 'content.wait_check':
+      case 'content.dialogs':
+      case 'content.find_option':
+      case 'content.fetch_json':
       case 'content.click':
       case 'content.type':
       case 'content.press_key':
       case 'content.capture_file_input': {
-        const pageAction = { 'content.snapshot': 'snapshot', 'content.click': 'click',
+        const pageAction = { 'content.snapshot': 'snapshot', 'content.read': 'read', 'content.wait_check': 'waitCheck',
+          'content.dialogs': 'dialogs', 'content.find_option': 'findOption', 'content.fetch_json': 'fetchJson', 'content.click': 'click',
           'content.type': 'type', 'content.press_key': 'pressKey',
           'content.capture_file_input': 'captureFileInput', 'content.real_input_prep': 'realInputPrep',
           'content.check_typed': 'checkTypedText', 'content.caret_to_end': 'caretToEnd', 'content.real_pointer_prep': 'realPointerPrep',
