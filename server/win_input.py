@@ -25,12 +25,15 @@ Licensed under the MIT License - see LICENSE file for details
 import asyncio
 import atexit
 import os
+import logging
 import re
 import sys
 import tempfile
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
 
 AVAILABLE = sys.platform == 'win32'
 
@@ -336,6 +339,8 @@ class WindowInput:
         # The add-on prefixes the agent window's title, so a page's title on its
         # own can't match this to a window of the person's, or the reverse
         self.agent_window = bool(prep.get('agentWindow'))
+        # Only the add-on's own window: the person can be in an agent profile's
+        self.own_window = bool(prep.get('ownWindow'))
         if self.agent_window and self.title:
             self.title = AGENT_WINDOW_PREFACE + self.title
         self.point = prep.get('point')
@@ -387,9 +392,9 @@ class WindowInput:
             self.give_back()
             try:
                 await self.until_raised_again()
-            except WindowInputUnavailable:
-                # This action is done, and the next one must not read it as active
-                not_yet_lowered[self.hwnd] = time.monotonic() + GIVE_BACK_DOUBT_S
+            except WindowInputUnavailable as late:
+                # This action is done, and the next one is warned off
+                logger.info(f"After real input: {late}")
         elif self.made_active:
             activated[self.hwnd] = asyncio.get_running_loop().call_later(ACTIVE_FOR_S, step_down, self.hwnd)
         # Falling back from here would do it all again on top of what went in
@@ -480,6 +485,8 @@ class WindowInput:
         deadline = time.monotonic() + GIVE_BACK_WAIT_S
         while user32.GetForegroundWindow() in (0, self.hwnd):
             if time.monotonic() >= deadline:
+                # The next look must not read this window as active
+                not_yet_lowered[self.hwnd] = time.monotonic() + GIVE_BACK_DOUBT_S
                 raise WindowInputUnavailable('Firefox did not give activation back to the person in time')
             await asyncio.sleep(GIVE_BACK_POLL_S)
 
@@ -689,11 +696,12 @@ class WindowInput:
         await self.make_active()
         # A line break goes in as Shift+Enter, as in bidi.py: a plain Enter
         # sends the message in chat boxes
-        batch = CHARS_PER_BATCH if self.agent_window else CHARS_PER_BATCH_THEIRS
+        batch = CHARS_PER_BATCH if self.own_window else CHARS_PER_BATCH_THEIRS
         sent = 0
         for char in text:
             if char == '\n':
                 await self.press(context, 'Shift+Enter')
+                await self.make_active()
                 continue
             self.post(WM_CHAR, ord(char), 1)
             sent += 1

@@ -1230,6 +1230,7 @@ async function showForRealInput(data, socket) {
   data.windowId = tab.windowId;
   const ownWindow = Boolean(await currentAgentWindow()) && tab.windowId === agentWindowId;
   data.agentWindow = ownWindow;
+  data.ownWindow = ownWindow;
   // A profile set aside for agents has no agent window, but the same title as a
   // window of the person's in their own Firefox must not pass for this one. The
   // person can still be in it, logging in to a site, so its tabs are not free to show.
@@ -1490,6 +1491,7 @@ async function handleContentAction(id, action, data) {
         }
         const pageResult = await sendMessageWithRetry(data.tabId, { action: pageAction, data });
         if (data.agentWindow && pageResult) pageResult.agentWindow = true;
+        if (data.ownWindow && pageResult) pageResult.ownWindow = true;
         if (data.activate && pageResult) pageResult.windowId = data.windowId;
         if (pageResult && pageResult.error) {
           sendError(id, 'PAGE_ERROR', pageResult.error);

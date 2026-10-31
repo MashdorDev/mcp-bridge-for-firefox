@@ -93,6 +93,20 @@ async def test_text_goes_in_as_characters_and_line_breaks_as_shift_enter():
 
 
 @pytest.mark.asyncio
+async def test_the_text_after_a_line_break_is_checked_again():
+    window = RecordingWindow()
+    checks = []
+
+    async def check():
+        checks.append(len(window.posted))
+
+    window.make_active = check
+    await window.type_text(None, 'a\nb')
+    # At the start, for the Shift+Enter, and between the Shift+Enter and the "b"
+    assert checks == [0, 1, 5]
+
+
+@pytest.mark.asyncio
 async def test_emoji_hand_the_text_to_another_way_before_any_of_it_is_typed():
     window = RecordingWindow()
     with pytest.raises(WindowInputUnavailable):
