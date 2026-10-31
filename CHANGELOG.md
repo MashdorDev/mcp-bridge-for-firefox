@@ -7,40 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-10-31
+
 ### Added
 - **`content_read` and `content_wait_for`.** The text of one element, and a wait for an element, text or title, which took a script or a whole page of text before.
 - **`content_dialogs`, `content_select_option` and `page_fetch_json`.** Open dialogs and what is stuck over a page, custom dropdowns, and a GET on the page's own origin, without a script.
 - **`scripts/clean-automation-prefs.py`** removes the test prefs `--remote-debugging-port` leaves in a profile.
 - **An agent profile.** Tick "This Firefox is for agents" in a separate Firefox profile and agents act there unless one is chosen by name. In its own process, real typing never touches the windows you are using, with no blink and no wait. See `docs/configuration.md`.
-
-### Added
 - **`page_realm` on `content_execute_script`**, for page objects the isolated realm can't iterate.
-
 - **`content_snapshot` says when a long list has more rows than are drawn**, where the page gives the count. `browsers_list` says whether real input is on.
+- **`content_scroll` scrolls what a wheel would.** Feeds that scroll in an inner container, such as Facebook's, didn't move for keys or the document. It finds the nearest container that can still go that way at an element or point, and says what moved and how much is left. The on-page cursor shows a mouse with its wheel while it scrolls.
+
+### Changed
+- **Calls are about 80 ms faster, all of them.** A reply woke its waiting tool only on the HTTP server's next 100 ms tick: `content_execute_script` went from 108 ms to 25 ms.
+- **Clicks take about half as long.** They wait for the page's reaction only as long as they need to, 80 to 300 ms instead of a fixed 400, and cursor moves are capped at 400 ms instead of 900. A median click went from 720 ms to 374 ms.
+- **Fewer tokens.** Tool schemas leave out what they repeated, and results are no longer wrapped twice. `content_get_text` stops at 20000 characters by default and says how to get more. Its reply and `content_execute_script`'s no longer start with a line about the page.
+- **Screenshots you look at are in CSS pixels.** A point read off one goes straight into `content_click(x, y)`, and it costs far fewer tokens at high display scaling. Saved files stay at full resolution.
+- **Clicks in a tab that isn't showing are faster.** Firefox holds a hidden page's timers back to about a second each, and the check of what a click changed ran on them: a click in a tab shown briefly went from 2.48 s to 0.78 s.
 
 ### Fixed
 - **Two sessions no longer hide each other's pages.** They shared one agent window and took turns showing their tab. Each server, which is each session unless several share one in HTTP mode, now gets its own window, and sessions in different profiles no longer wait for each other. See `docs/configuration.md` for what one Firefox still shares.
 - **A page's own Copy button counts as the agent copying.** `content_paste` refused what it put on the clipboard as the person's. On Windows, with real input.
 - **Another add-on's page says it can't be captured.** It returned a blurred thumbnail that read as a capture.
 - **Real input stops when its target does.** The add-on is asked before every click, key and batch of text whether the tab still shows in its window and the agent isn't paused, and the foreground window is checked again. Once input has gone in, a stop is reported as a stop and never redone by another route. If something else switches the tab mid-text, at most 10 characters can reach the new tab.
-- **One real input at a time across all servers on a computer**, so one session handing activation back can't send another's text to the person's window.
+- **One real input at a time per Firefox, across all its servers**, so one session handing activation back can't send another's text to the person's window.
 - **Keys no longer click a field that already has the focus.** `content_press_key` with a target clicked it first, every time, so `Control+a` followed by `Backspace` deleted one character instead of the selection.
-- **"Show me the tab the agent works in" off now means it.** Real input brought the agent's tab forward anyway, because window input only reaches the tab showing. With the setting off, tabs the agent opens go in a window of their own, opened without focus, and a tab it uses in your window is shown only for the action, then yours comes back. The agent's window has `[Agent]` in its title. If you are using another window of that Firefox, keys wait for you to pause for 2 s, for up to 10 s, then borrow its activation for just that action.
-
-### Fixed
+- **"Show me the tab the agent works in" off now means it.** Real input brought the agent's tab forward anyway, because window input only reaches the tab showing. With the setting off, tabs the agent opens go in a window of their own, opened without focus, and a tab it uses in your window is shown only for the action, once you pause, then yours comes back. The agent's window has `[Agent` in its title. If you are using another window of that Firefox, keys wait for you to pause for 2 s, for up to 10 s, then borrow its activation for just that action. While it borrows, about 0.4 s for a short text, its window holds the Windows foreground from underneath yours, your title bar dims and your page sees a blur and a focus.
 - **A hung page is named.** A request to a page that stopped answering said only "Request timed out". It now says which tab, that other tabs aren't affected, and how to clear it.
 - **`focus_window` says when Windows refused.** It reported "focused successfully" whenever the request was accepted, including when the window stayed behind.
-
-### Fixed
 - **A profile keeps its default name on every server.** A profile with no name set was named "Firefox N" by the order it connected, so the same profile could be "Firefox 1" on one server and "Firefox 2" on another. The name now comes from the profile's own id. Names you set are unchanged.
 - **`browsers_select` fails as a failure.** An unknown name came back as an ordinary answer, which repeats the name, so a check on the reply could pass.
-### Added
-- **`content_scroll` scrolls what a wheel would.** Feeds that scroll in an inner container, such as Facebook's, didn't move for keys or the document. It finds the nearest container that can still go that way at an element or point, and says what moved and how much is left. The on-page cursor shows a mouse with its wheel while it scrolls.
-### Changed
-- **Calls are about 80 ms faster, all of them.** A reply woke its waiting tool only on the HTTP server's next 100 ms tick: `content_execute_script` went from 108 ms to 25 ms.
-- **Clicks take about half as long.** They wait for the page's reaction only as long as they need to, 80 to 300 ms instead of a fixed 400, and cursor moves are capped at 400 ms instead of 900. A median click went from 720 ms to 374 ms.
-- **Fewer tokens.** Tool schemas leave out what they repeated, and results are no longer wrapped twice. `content_get_text` stops at 20000 characters by default and says how to get more. Its reply and `content_execute_script`'s no longer start with a line about the page.
-- **Screenshots you look at are in CSS pixels.** A point read off one goes straight into `content_click(x, y)`, and it costs far fewer tokens at high display scaling. Saved files stay at full resolution.
 
 ## [1.13.0] - 2026-10-30
 

@@ -1,7 +1,7 @@
 {
   "name": "firefox",
   "displayName": "MCP Bridge for Firefox",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Lets Claude Code read, click, type, drag and take screenshots in Firefox. Needs the MCP Bridge for Firefox add-on in Firefox and uv on this computer.",
   "author": {
     "name": "Dor Zairi",

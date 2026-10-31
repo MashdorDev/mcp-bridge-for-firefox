@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-bridge-for-firefox"
-version = "1.13.0"
+version = "1.14.0"
 description = "MCP server that lets Claude Code and other MCP clients use Firefox through the MCP Bridge add-on"
 readme = "README.md"
 license = "MIT"
