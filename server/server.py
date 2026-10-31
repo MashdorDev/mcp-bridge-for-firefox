@@ -710,6 +710,12 @@ class FoxMCPServer:
 
         except asyncio.TimeoutError:
             self.pending_requests.pop(request_id, None)
+            tab = (request.get("data") or {}).get("tabId")
+            if tab is not None and str(request.get("action", "")).startswith("content."):
+                # One page hanging holds up only itself, so saying which keeps an
+                # agent from concluding the whole browser is stuck
+                return {"error": f"Tab {tab} did not answer in {timeout:.0f} seconds, so its page is probably hung. "
+                                 "Other tabs are not affected. navigation_reload or tabs_close clears it"}
             return {"error": f"Request timed out after {timeout} seconds"}
         except Exception as e:
             self.pending_requests.pop(request_id, None)

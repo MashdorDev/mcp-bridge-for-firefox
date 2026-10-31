@@ -1691,7 +1691,10 @@ async function handleWindowsAction(id, action, data) {
           return;
         }
         await browser.windows.update(data.windowId, { focused: true });
-        sendResponse(id, action, { success: true, windowId: data.windowId });
+        // Windows may refuse a background process, and the update still succeeds
+        await new Promise(resolve => setTimeout(resolve, 150));
+        sendResponse(id, action, { success: true, windowId: data.windowId,
+          focused: (await browser.windows.get(data.windowId)).focused });
         break;
 
       case 'windows.update':
