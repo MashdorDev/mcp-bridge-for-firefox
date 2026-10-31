@@ -31,10 +31,12 @@ from fastmcp.utilities.types import Image
 
 try:
     from .bidi import LIKELY_PORTS, BidiSession, BidiUnavailable, listening_ports
-    from .win_input import AVAILABLE as WINDOW_INPUT, WindowInput, WindowInputUnavailable, WindowNotShowing, clipboard_sequence
+    from .win_input import (AVAILABLE as WINDOW_INPUT, WindowInput, WindowInputUnavailable, WindowNotShowing, clipboard_sequence,
+                            machine_turn, wait_to_change_tabs)
 except ImportError:
     from bidi import LIKELY_PORTS, BidiSession, BidiUnavailable, listening_ports
-    from win_input import AVAILABLE as WINDOW_INPUT, WindowInput, WindowInputUnavailable, WindowNotShowing, clipboard_sequence
+    from win_input import (AVAILABLE as WINDOW_INPUT, WindowInput, WindowInputUnavailable, WindowNotShowing, clipboard_sequence,
+                           machine_turn, wait_to_change_tabs)
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,8 @@ SCRIPTED_ONLY = object()
 TEXT_LIMIT = 20000
 # Why this call has no real input, for the refusal to say which case it is
 REAL_INPUT_MISS = contextvars.ContextVar("real_input_miss", default="")
+# The browser a tool call on a tab began in: tab ids mean nothing in any other
+CALL_BROWSER = contextvars.ContextVar("call_browser", default=None)
 # Firefox updates a window's title and a tab's visibility shortly after activating it
 WINDOW_SETTLE_DELAYS = (0.2, 0.4, 0.8)
 # How long after this server starts an add-on may take to find it: the add-on
@@ -415,9 +419,12 @@ class FoxMCPTools:
             if kwargs.get('tab_id') is not None and note_agent_tab:
                 note_agent_tab(self._session_id(), kwargs['tab_id'])
             token = AGENT_CALL.set(call)
+            # Whichever browser becomes active while this waits or runs
+            pinned = CALL_BROWSER.set(getattr(self.websocket_server, 'active_browser', None))
             try:
                 return await fn(*args, **kwargs)
             finally:
+                CALL_BROWSER.reset(pinned)
                 AGENT_CALL.reset(token)
 
         status_param = inspect.Parameter(
@@ -900,7 +907,12 @@ class FoxMCPTools:
 
             if response.get("type") == "response" and "data" in response:
                 tab = response["data"].get("tab", {})
-                return f"Created tab: ID {tab.get('id')} - {tab.get('title', 'Loading...')} - {tab.get('url', url)}"
+                # What a later call with no tab means, rather than the person's tab
+                note_agent_tab = getattr(self.websocket_server, 'note_agent_tab', None)
+                if note_agent_tab and tab.get('id') is not None:
+                    note_agent_tab(self._session_id(), tab['id'])
+                where = ", in the agent's own window: tabs_switch shows it to the person" if response["data"].get("agentWindow") else ""
+                return f"Created tab: ID {tab.get('id')} - {tab.get('title', 'Loading...')} - {tab.get('url', url)}{where}"
 
             return "Unable to create tab"
 
@@ -2139,6 +2151,7 @@ class FoxMCPTools:
                 version = f", add-on {browser.version}" if browser.version else ", add-on older than 1.4.3"
                 minutes = int((time.time() - browser.connected_at) // 60)
                 app = " [Thunderbird]" if browser.app == 'thunderbird' else ""
+                app += " [agent profile]" if getattr(browser, 'agent_profile', False) else ""
                 paired = ", paired" if getattr(browser, 'paired', False) else ""
                 lines.append(f"- {browser.name}{app}{active}: id {browser.key[:8]}{version}{paired}, "
                              f"connected {minutes} min ago")
@@ -2461,10 +2474,12 @@ class FoxMCPTools:
 
             Returns (data, None) on success and (None, error message) on failure.
             """
+            pinned = CALL_BROWSER.get()
             response = await self.websocket_server.send_request_and_wait({
                 "id": str(uuid.uuid4()),
                 "type": "request",
                 **message,
+                **({"to_browser": pinned} if pinned else {}),
                 "timestamp": datetime.now().isoformat()
             })
             if "error" in response:
@@ -2522,8 +2537,18 @@ class FoxMCPTools:
                 REAL_INPUT_MISS.set("no browser is connected right now" if not getattr(server, 'extension_connection', None)
                                     else "real input is off in this browser's add-on settings")
                 return None
-            async with server.real_input_turn:
-                return await real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name)
+            try:
+                async with server.real_input_turn:
+                    async with machine_turn():
+                        try:
+                            return await real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name)
+                        finally:
+                            if WINDOW_INPUT:
+                                await page_request({"action": "content.real_input_done", "data": {"tabId": tab_id}})
+            except WindowInputUnavailable as unavailable:
+                logger.info(f"No window input: {unavailable}")
+                REAL_INPUT_MISS.set(str(unavailable))
+                return None
 
         async def real_input_in_turn(tab_id, ref, selector, purpose, act, prep_message, target_name):
             server = self.websocket_server
@@ -2547,6 +2572,16 @@ class FoxMCPTools:
             prep, error = await page_request(message)
             if error:
                 return None, error
+            if prep.get("needsShow"):
+                try:
+                    await wait_to_change_tabs()
+                except WindowInputUnavailable as unavailable:
+                    REAL_INPUT_MISS.set(str(unavailable))
+                    return None
+                message["data"]["showNow"] = True
+                prep, error = await page_request(message)
+                if error:
+                    return None, error
             # A target real input cannot work (a <select>): the scripted path,
             # even when the server runs real input only
             if prep.get("scripted"):
@@ -2562,10 +2597,16 @@ class FoxMCPTools:
                     await act(backend, context, element)
                 return prep, None
 
+            async def still_showing():
+                data, error = await page_request({"action": "content.real_input_showing",
+                                                  "data": {"tabId": tab_id, "windowId": prep.get("windowId")}})
+                return not error and data.get("showing")
+
             if WINDOW_INPUT:
                 for delay in (*WINDOW_SETTLE_DELAYS, None):
                     try:
-                        async with WindowInput(prep) as window:
+                        # An add-on too old to answer gives no window to compare
+                        async with WindowInput(prep, still_showing if prep.get("windowId") else None) as window:
                             return await run(window, window.hwnd)
                     except WindowNotShowing as unavailable:
                         logger.info(f"No window input yet: {unavailable}")
@@ -2965,6 +3006,9 @@ class FoxMCPTools:
             at_caret = not (ref or selector or field)
 
             async def type_for_real(bidi, context, element):
+                if isinstance(bidi, WindowInput):
+                    # Refused here it still has another way, not after a click
+                    bidi.check_text(text)
                 if at_caret:
                     if element is None:
                         raise ValueError("Typing at the caret needs add-on 1.13 or later: update it, or pass a ref")

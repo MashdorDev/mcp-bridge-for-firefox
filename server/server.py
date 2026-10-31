@@ -93,6 +93,8 @@ def find_available_port(start_port=3000, max_attempts=100):
 # Claude session would otherwise find no port and no browser. The extension
 # connects to every server on these ports, so each session gets its own.
 EXTRA_SERVER_PORTS = 4
+# Since agents last acted in a browser, how long an agent profile leaves it be
+AGENT_WORK_LASTS_S = 3600.0
 
 # A secret shared with each add-on, so neither side has to trust whoever holds
 # the port: any local process can listen on 8765 first, or claim to be the
@@ -168,6 +170,8 @@ class BrowserConnection:
     connected_at: float = field(default_factory=time.time)
     # Real input through WebDriver BiDi: whether the person allows it, the port
     # they set (0: find it), and the port it was last found on
+    # The person set this Firefox aside for agents
+    agent_profile: bool = False
     real_input: bool = False
     real_input_port: int = 0
     real_input_found: int = 0
@@ -210,6 +214,8 @@ class FoxMCPServer:
         # per browser, because requests follow the active browser, which
         # browsers_select can change mid-call.
         self.real_input_turn = asyncio.Lock()
+        # When agents last acted in each browser, connected or dropped for a moment
+        self.browsers_used_at: Dict[Optional[str], float] = {}
 
         # In stdio mode the MCP side has no listener, so there is no port to pick.
         # Running the selection anyway would bind-test a port nothing serves and
@@ -425,6 +431,7 @@ class FoxMCPServer:
             return
         browser.version = str(data.get('version') or '')
         browser.said_hello = True
+        browser.agent_profile = bool(data.get('agent_profile'))
         browser.real_input = bool(data.get('real_input'))
         browser.real_input_missed_at = 0.0  # the person may just have set it up
         try:
@@ -445,6 +452,7 @@ class FoxMCPServer:
             browser.name = 'Thunderbird ' + browser.name[len('Firefox '):]
 
         if not instance_id or instance_id == browser.key:
+            self._prefer_agent_profile(browser)
             return
 
         old = self.browsers.get(instance_id)
@@ -457,12 +465,26 @@ class FoxMCPServer:
         for monitor_id, key in self.monitor_browsers.items():
             if key == browser.key:
                 self.monitor_browsers[monitor_id] = instance_id
+        if browser.key in self.browsers_used_at:
+            self.browsers_used_at[instance_id] = self.browsers_used_at.pop(browser.key)
         browser.key = instance_id
         if was_active or (self.active_browser not in self.browsers and self._may_take_over()):
             self.active_browser = instance_id
+        self._prefer_agent_profile(browser)
         if self.active_browser == instance_id:
             self.active_browser_name = browser.name
         logger.info(f"Browser {browser.name} ({instance_id[:8]}) said hello, add-on {browser.version}")
+
+    def _prefer_agent_profile(self, browser: BrowserConnection):
+        """A profile set aside for agents is where they act, unless one was chosen
+        by name or work has begun elsewhere: tab ids mean nothing in another profile"""
+        active = self.browsers.get(self.active_browser)
+        # Not for good: yesterday's work is over, and its tabs may be gone
+        in_use = time.monotonic() - self.browsers_used_at.get(self.active_browser, -AGENT_WORK_LASTS_S) < AGENT_WORK_LASTS_S
+        if (browser.agent_profile and browser.key and not self.browser_chosen and active is not browser
+                and not in_use and not (active and active.agent_profile)):
+            self.active_browser = browser.key
+            self.active_browser_name = browser.name
 
     def _answer_pairing(self, websocket, data: Dict[str, Any]):
         """Prove the token to an add-on that sent a nonce, and ask it to prove it back
@@ -665,7 +687,12 @@ class FoxMCPServer:
 
     async def send_to_extension(self, message: Dict[str, Any]) -> bool:
         """Send message to browser extension"""
-        target = self._socket_for(message)
+        # An action's own browser, or nobody: a tab id means nothing in another
+        if 'to_browser' in message:
+            pinned = self.browsers.get(message.pop('to_browser'))
+            target = pinned.websocket if pinned else None
+        else:
+            target = self._socket_for(message)
         if not target:
             logger.warning("No extension connection available")
             return False
@@ -684,7 +711,7 @@ class FoxMCPServer:
         if not request_id:
             raise ValueError("Request must have an ID")
 
-        if not self.extension_connection:
+        if not self.extension_connection and 'to_browser' not in request:
             return {"error": self.no_browser_reason()}
 
         # The tool this request comes from, and the status line its caller gave,
@@ -692,6 +719,8 @@ class FoxMCPServer:
         agent_call = AGENT_CALL.get()
         if agent_call and 'agent' not in request:
             request = {**request, 'agent': agent_call}
+        if agent_call:
+            self.browsers_used_at[request.get('to_browser', self.active_browser)] = time.monotonic()
 
         # Create future for response
         response_future = asyncio.Future()
@@ -778,6 +807,7 @@ class FoxMCPServer:
             self.agent_tabs[int(tab_id)] = session_id or self.NO_MCP_SESSION
         except (TypeError, ValueError):
             return
+        self.browsers_used_at[self.active_browser] = time.monotonic()
         browser = self.browsers.get(self.active_browser)
         if browser:
             browser.last_tab = int(tab_id)

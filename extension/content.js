@@ -894,6 +894,7 @@ const CURSOR_STATES = ['idle', 'thinking', 'reading', 'clicking', 'typing', 'wai
 let fieldTimer = null;
 let idleTimer = null;
 let cursorPos = null;
+let shownBriefly = false;
 let cursorState = 'idle';
 let agentLabel = OVERLAY_LABEL;
 
@@ -1370,8 +1371,9 @@ async function moveCursorToPoint(to, targetSize, press) {
   pointer.getAnimations().forEach(animation => animation.cancel());
   pointer.style.transition = 'none';
   pointer.style.transform = `translate(${to.x}px, ${to.y}px)`;
-  // Nobody sees a hidden tab, and Firefox holds its timers back for seconds
-  if (document.hidden || !settings.overlayEnabled || !settings.cursorEnabled) return;
+  // Nobody sees a hidden tab, and Firefox holds its timers back for seconds. A
+  // tab shown only for this action goes back at once, so every moment shows
+  if (document.hidden || shownBriefly || !settings.overlayEnabled || !settings.cursorEnabled) return;
   if (Math.hypot(to.x - from.x, to.y - from.y) >= 2) {
     const { points, duration } = humanPath(from, to, targetSize);
     const motion = pointer.animate(
@@ -1593,6 +1595,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       // can find this tab among BiDi's browsing contexts, whose ids are
       // unrelated to the extension's tab ids.
       case 'realInputPrep': {
+        shownBriefly = Boolean(data.switched);
         const el = hasTarget(data) ? findTarget(data) : data.purpose === 'type' ? focusedField() : null;
         if (data.purpose === 'click') pendingClicks.set(data.token, pageState(el));
         const watched = { click: el && 'pointer', key: !inFrame(el || document.activeElement) && 'keys',
@@ -1672,6 +1675,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       // Points for a real hover, point click or drag: the cursor moves to
       // the start, and the server gets viewport coordinates to send to Firefox
       case 'realPointerPrep': {
+        shownBriefly = Boolean(data.switched);
         try {
           const from = targetPoint(data.from);
           const to = data.to ? targetPoint(data.to) : null;

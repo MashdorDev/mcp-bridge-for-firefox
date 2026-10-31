@@ -24,6 +24,7 @@ const SETTINGS_DEFAULTS = {
   blockedSites: '',
   allowPrivate: false,
   followAgent: false,
+  agentProfile: false,
   releaseAfterMinutes: 5,
 
   // On the page

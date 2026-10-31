@@ -20,6 +20,16 @@ browser.storage.onChanged.addListener((changes, area) => {
   // A paused agent lets go of its tabs, so the person gets the page back
   if (changes.paused && changes.paused.newValue) {
     for (const tabId of [...agentTabs.keys()]) releaseAgentTab(tabId);
+    giveAllTabsBack();
+  }
+  // Without the setting, the server looks for the page's title as it is
+  if (changes.agentProfile && !changes.agentProfile.newValue) {
+    prefacedWindows.clear();
+    browser.windows.getAll().then(windows => {
+      for (const { id } of windows) {
+        if (id !== agentWindowId) browser.windows.update(id, { titlePreface: '' }).catch(() => {});
+      }
+    }).catch(() => {});
   }
 });
 
@@ -135,14 +145,15 @@ let loggedDown = false;
 // several Firefox profiles apart. Kept in storage.local, never storage.sync:
 // Firefox Sync would copy a synced id or name to every profile on the account.
 async function browserIdentity() {
-  const stored = await browser.storage.local.get({ instanceId: '', browserName: '', realInput: true, realInputPort: 0 });
+  const stored = await browser.storage.local.get({ instanceId: '', browserName: '', realInput: true, realInputPort: 0, agentProfile: false });
   let instanceId = stored.instanceId;
   if (!instanceId) {
     instanceId = crypto.randomUUID();
     await browser.storage.local.set({ instanceId });
   }
   return { instance_id: instanceId, name: stored.browserName, version: browser.runtime.getManifest().version,
-    real_input: Boolean(stored.realInput), real_input_port: Number(stored.realInputPort) || 0 };
+    real_input: Boolean(stored.realInput), real_input_port: Number(stored.realInputPort) || 0,
+    agent_profile: Boolean(stored.agentProfile) };
 }
 
 async function sendHello(socket) {
@@ -195,7 +206,7 @@ async function handleHelloAck(socket, data) {
 browser.storage.onChanged.addListener((changes, area) => {
   // Every server this browser is connected to learns its new name or
   // real-input port, and pairs again with a new token
-  if (area === 'local' && (changes.browserName || changes.realInput || changes.realInputPort || changes.pairingToken)) {
+  if (area === 'local' && (changes.browserName || changes.agentProfile || changes.realInput || changes.realInputPort || changes.pairingToken)) {
     sendHello(websocket);
     for (const socket of extraSockets.values()) sendHello(socket);
   }
@@ -262,6 +273,7 @@ function connectToMCPServer() {
       isConnected = false;
       updateBadge();
       clearAllMonitors('the connection to the server dropped');
+      giveTabsBackOf(socket);
       releaseAgentTabsOf(socket);
       scheduleReconnect();
     };
@@ -330,6 +342,7 @@ function connectExtraServer(port) {
       }
       if (extraSockets.get(port) === socket) extraSockets.delete(port);
       updateBadge();
+      giveTabsBackOf(socket);
       releaseAgentTabsOf(socket);
       settled();
     };
@@ -841,13 +854,16 @@ async function handleTabsAction(id, action, data) {
           createTabOptions.pinned = data.pinned;
         }
         
-        const newTab = await browser.tabs.create(createTabOptions);
+        const inAgentWindow = !data.windowId && !settings.followAgent && !settings.agentProfile;
+        const newTab = inAgentWindow ? await tabInAgentWindow(createTabOptions) : await browser.tabs.create(createTabOptions);
         const call = agentCalls.get(id);
         markAgentActive(newTab.id, {
           state: 'waiting', label: AGENT_ACTIVITY['tabs.create'][1],
           agentStatus: call && call.status, socket: call && call.socket
         });
-        sendResponse(id, action, { tab: newTab });
+        // After marking it, for the listeners that clear the mark to see it
+        const createdTab = inAgentWindow ? await untilAddressChanged(newTab, createTabOptions.url) : newTab;
+        sendResponse(id, action, { tab: createdTab, agentWindow: createdTab.windowId === agentWindowId });
         break;
 
       case 'tabs.close':
@@ -865,6 +881,9 @@ async function handleTabsAction(id, action, data) {
 
       case 'tabs.switch':
         await browser.tabs.update(data.tabId, { active: true });
+        // Asked for by name: the person is meant to see it, even in the agent's window
+        const switched = await browser.tabs.get(data.tabId);
+        if (switched.windowId === agentWindowId) await browser.windows.update(agentWindowId, { state: 'normal', focused: true });
         sendResponse(id, action, { success: true });
         break;
 
@@ -1158,6 +1177,137 @@ async function navigated(tabId, go) {
   }
 }
 
+// Real input only reaches the tab showing in a window. With "Show me the tab the
+// agent works in" off, the agent's own tabs live in a window of their own, where
+// showing one takes nothing away from the person. A tab it is told to use in
+// their window is shown just for the action, then theirs comes back.
+let agentWindowId = null;
+const shownInsteadOf = new Map();  // agent tab -> { previous: the person's tab, token: the action, socket: its server }
+let agentWindowTurn = Promise.resolve();
+const prefacedWindows = new Set();
+
+// The title's prefix tells the server, and the person, which window this is. It
+// also means a page's title alone can never match it to one of theirs.
+const AGENT_WINDOW_PREFACE = '[Agent] ';
+const AGENT_TAB_ADDRESS_MS = 5000;
+const AGENT_TAB_ADDRESS_POLL_MS = 50;
+
+async function currentAgentWindow() {
+  if (agentWindowId === null) {
+    // Kept over a reload of the add-on, which clears session storage: tabs of a
+    // window it lost track of would be looked for by their bare page title.
+    // Window ids restart with Firefox, so the id only counts with the title:
+    // it could be one of the person's windows now.
+    const stored = await browser.storage.local.get({ agentWindowId: null }).catch(() => ({}));
+    const window = stored.agentWindowId != null && await browser.windows.get(stored.agentWindowId).catch(() => null);
+    if (window && (window.title || '').startsWith(AGENT_WINDOW_PREFACE)) agentWindowId = stored.agentWindowId;
+  }
+  return agentWindowId !== null && await browser.windows.get(agentWindowId).catch(() => null);
+}
+
+// One at a time, or two tabs opening at once would make two windows
+function tabInAgentWindow(options) {
+  const opened = agentWindowTurn.then(() => openTabInAgentWindow(options));
+  agentWindowTurn = opened.catch(() => {});
+  return opened;
+}
+
+// A tab in a minimised window stays on about:blank until the page answers, and
+// until then a script in it has no host permission and tabs_list can't name it
+async function untilAddressChanged(tab, url) {
+  if (!url || url === 'about:blank') return tab;
+  const deadline = Date.now() + AGENT_TAB_ADDRESS_MS;
+  while (tab.url === 'about:blank' && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, AGENT_TAB_ADDRESS_POLL_MS));
+    const now = await browser.tabs.get(tab.id).catch(() => null);
+    // Closed, as a download's tab is
+    if (!now) return tab;
+    tab = now;
+  }
+  return tab;
+}
+
+async function openTabInAgentWindow(options) {
+  if (await currentAgentWindow()) {
+    // Not active: another client may be mid-action in the tab showing there, and
+    // the action that needs this one brings it up
+    return browser.tabs.create({ ...options, active: false, windowId: agentWindowId });
+  }
+  // Minimised, because Firefox gives a new window the foreground whatever
+  // focused says, and on the person's screen that is what this exists to avoid.
+  // The server brings it back behind everything when it needs to aim a click.
+  const created = await browser.windows.create({ url: options.url, state: 'minimized', titlePreface: AGENT_WINDOW_PREFACE });
+  agentWindowId = created.id;
+  await browser.storage.local.set({ agentWindowId }).catch(() => {});
+  const [tab] = created.tabs;
+  return options.pinned ? browser.tabs.update(tab.id, { pinned: true }) : tab;
+}
+
+async function showForRealInput(data, socket) {
+  const tab = await browser.tabs.get(data.tabId);
+  data.windowId = tab.windowId;
+  const ownWindow = Boolean(await currentAgentWindow()) && tab.windowId === agentWindowId;
+  data.agentWindow = ownWindow;
+  data.ownWindow = ownWindow;
+  // A profile set aside for agents has no agent window, but the same title as a
+  // window of the person's in their own Firefox must not pass for this one. The
+  // person can still be in it, logging in to a site, so its tabs are not free to show.
+  if (settings.agentProfile) {
+    data.agentWindow = true;
+    if (!prefacedWindows.has(tab.windowId)) {
+      await browser.windows.update(tab.windowId, { titlePreface: AGENT_WINDOW_PREFACE });
+      prefacedWindows.add(tab.windowId);
+    }
+  }
+  let entry = shownInsteadOf.get(data.tabId);
+  // Left by an action that never finished. Still showing, it still owes the
+  // person their tab; if they have since moved on, it owes nothing.
+  if (entry && entry.token !== data.token) {
+    entry = tab.active ? { ...entry, token: data.token, socket } : null;
+    if (entry) shownInsteadOf.set(data.tabId, entry);
+    else shownInsteadOf.delete(data.tabId);
+  }
+  if (!tab.active && !settings.followAgent && !ownWindow) {
+    // The server waits for the person to pause first, and asks again
+    if (!data.showNow) {
+      data.needsShow = true;
+      return;
+    }
+    const [shown] = await browser.tabs.query({ active: true, windowId: tab.windowId });
+    if (shown) {
+      // What shows may be another agent's tab left behind: theirs is the one before it
+      const left = shownInsteadOf.get(shown.id);
+      if (left) shownInsteadOf.delete(shown.id);
+      entry = { previous: left ? left.previous : shown.id, token: data.token, socket };
+      shownInsteadOf.set(data.tabId, entry);
+    }
+  }
+  // Also on a retry of the same action, which finds the tab already showing
+  data.switched = Boolean(entry);
+  await browser.tabs.update(data.tabId, { active: true });
+}
+
+async function giveTabBack(tabId) {
+  const entry = shownInsteadOf.get(tabId);
+  if (!entry) return;
+  shownInsteadOf.delete(tabId);
+  const tab = await browser.tabs.get(tabId);
+  // Unless the person has since moved on to another tab themselves
+  if (tab.active) await browser.tabs.update(entry.previous, { active: true }).catch(() => {});
+}
+
+// When an action can't finish, the person still gets their tab back
+function giveAllTabsBack() {
+  for (const tabId of [...shownInsteadOf.keys()]) giveTabBack(tabId).catch(() => {});
+}
+
+// Only that server's: another may be mid-action in the tab it is showing
+function giveTabsBackOf(socket) {
+  for (const [tabId, entry] of [...shownInsteadOf]) {
+    if (entry.socket === socket) giveTabBack(tabId).catch(() => {});
+  }
+}
+
 function sendAgentState(tabId) {
   const entry = agentTabs.get(tabId);
   if (!entry) return;
@@ -1319,6 +1469,18 @@ async function handleContentAction(id, action, data) {
         }
         break;
 
+      case 'content.real_input_done':
+        await giveTabBack(data.tabId).catch(() => {});
+        sendResponse(id, action, { done: true });
+        break;
+
+      // Asked before every key: keys go to whatever tab shows in the window
+      case 'content.real_input_showing': {
+        const tab = await browser.tabs.get(data.tabId).catch(() => null);
+        sendResponse(id, action, { showing: Boolean(tab && tab.active && tab.windowId === data.windowId && !settings.paused) });
+        break;
+      }
+
       case 'content.caret_to_end':
       case 'content.real_input_prep':
       case 'content.real_pointer_prep':
@@ -1340,8 +1502,15 @@ async function handleContentAction(id, action, data) {
           'content.real_input_arrived': 'realInputArrived',
           'content.hover': 'hover', 'content.scroll': 'scroll', 'content.drag': 'drag', 'content.click_effect': 'clickEffect' }[action];
         // Real input posted to the window lands in the tab showing in it
-        if (data.activate) await browser.tabs.update(data.tabId, { active: true });
+        if (data.activate) await showForRealInput(data, replySockets.get(id));
+        if (data.needsShow) {
+          sendResponse(id, action, { needsShow: true });
+          break;
+        }
         const pageResult = await sendMessageWithRetry(data.tabId, { action: pageAction, data });
+        if (data.agentWindow && pageResult) pageResult.agentWindow = true;
+        if (data.ownWindow && pageResult) pageResult.ownWindow = true;
+        if (data.activate && pageResult) pageResult.windowId = data.windowId;
         if (pageResult && pageResult.error) {
           sendError(id, 'PAGE_ERROR', pageResult.error);
         } else {
