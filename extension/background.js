@@ -982,11 +982,7 @@ async function handleTabsAction(id, action, data) {
         let wantedTab = null;
         if (data.tabId != null) {
           wantedTab = await browser.tabs.get(Number(data.tabId)).catch(() => null);
-          // What comes back is a blurred thumbnail, which reads as a real capture
-          if (wantedTab && wantedTab.url.startsWith('moz-extension://') && !wantedTab.url.startsWith(browser.runtime.getURL(''))) {
-            sendError(id, 'CAPTURE_ERROR', 'Firefox keeps other add-ons\' pages from add-ons, so this tab can\'t be captured');
-            break;
-          }
+
           if (!wantedTab && !data.tabIdOptional) {
             sendError(id, 'CAPTURE_ERROR', `No tab with id ${data.tabId}`);
             break;
@@ -997,6 +993,11 @@ async function handleTabsAction(id, action, data) {
         // hide it for the capture. Tabs without content.js simply have none.
         const [shownTab] = wantedTab ? [wantedTab] : await browser.tabs.query(
           windowId ? { active: true, windowId } : { active: true, currentWindow: true });
+        // What comes back is a blurred thumbnail, which reads as a real capture
+        if (shownTab && shownTab.url && shownTab.url.startsWith('moz-extension://') && !shownTab.url.startsWith(browser.runtime.getURL(''))) {
+          sendError(id, 'CAPTURE_ERROR', 'Firefox keeps other add-ons\' pages from add-ons, so this tab can\'t be captured');
+          break;
+        }
         const setOverlay = (visible) => shownTab
           ? browser.tabs.sendMessage(shownTab.id, { action: 'overlayVisibility', data: { visible } })
             .catch(() => {})
@@ -1421,9 +1422,16 @@ const pendingUploads = new Map();
 // Evaluated by the page, whose values reach here only through JSON. Awaited, as
 // the page's own promises can't be returned across.
 function pageRealmCode(script) {
+  const asFunction = `(async () => {\n${script}\n})()`;
   return `(async () => {
     const page = window.wrappedJSObject;
-    const value = await page.eval(${JSON.stringify(script)});
+    let value;
+    try {
+      value = await page.eval(${JSON.stringify(script)});
+    } catch (error) {
+      if (!/return not in function|await .*is only valid/.test(error.message)) throw error;
+      value = await page.eval(${JSON.stringify(asFunction)});
+    }
     const json = page.JSON.stringify(value);
     return json === undefined ? undefined : JSON.parse(json);
   })()`;
@@ -1464,6 +1472,8 @@ async function handleContentAction(id, action, data) {
             executeResults = await browser.tabs.executeScript(data.tabId, data.pageRealm
               ? { code: pageRealmCode(script) } : { code: `${strict}{\n${script}\n}` });
           } catch (error) {
+            // Never run again outside the page, where it would find nothing of the page's
+            if (data.pageRealm) throw error;
             if (/return not in function|await .*is only valid/.test(error.message)) {
               executeResults = await browser.tabs.executeScript(data.tabId, {
                 code: `(async () => {\n${script}\n})()`
@@ -1479,6 +1489,7 @@ async function handleContentAction(id, action, data) {
           const result = executeResults && executeResults.length > 0 ? executeResults[0] : null;
           sendResponse(id, action, { 
             result: result,
+            pageRealm: Boolean(data.pageRealm),
             url: await getCurrentTabUrl(data.tabId)
           });
         } catch (scriptError) {

@@ -32,11 +32,11 @@ from fastmcp.utilities.types import Image
 try:
     from .bidi import LIKELY_PORTS, BidiSession, BidiUnavailable, listening_ports
     from .win_input import (AVAILABLE as WINDOW_INPUT, WindowInput, WindowInputUnavailable, WindowNotShowing, clipboard_sequence,
-                            machine_turn, wait_to_change_tabs)
+                            machine_turn, seconds_idle, wait_to_change_tabs)
 except ImportError:
     from bidi import LIKELY_PORTS, BidiSession, BidiUnavailable, listening_ports
     from win_input import (AVAILABLE as WINDOW_INPUT, WindowInput, WindowInputUnavailable, WindowNotShowing, clipboard_sequence,
-                           machine_turn, wait_to_change_tabs)
+                           machine_turn, seconds_idle, wait_to_change_tabs)
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -80,8 +80,9 @@ WINDOW_SETTLE_DELAYS = (0.2, 0.4, 0.8)
 # content_wait_for: how often it looks, and the longest a caller can ask for
 WAIT_POLL_S = 0.25
 WAIT_MAX_S = 120.0
-# A click on one of these is the agent copying, by way of the page's own button
-COPY_BUTTON = re.compile(r'\bcop(y|ied)\b|העתק', re.IGNORECASE)
+# A click on one of these is the agent copying, by way of the page's own button.
+# A file called "Copy of report" is not one.
+COPY_BUTTON = re.compile(r'\] (button|a|menuitem) "(copy|העתק)(?! of\b)', re.IGNORECASE)
 # How long after this server starts an add-on may take to find it: the add-on
 # retries every 5 s, or every 30 s once it has been failing for a while
 RECONNECT_WINDOW_S = 35
@@ -2446,7 +2447,8 @@ class FoxMCPTools:
 
             It runs apart from the page's own scripts, which can't see its names,
             and some page objects can't be iterated from there. page_realm runs it
-            as the page does, unless the page's security policy forbids it.
+            as the page does, unless the page's security policy forbids it. The page
+            can then see the code and change what it gives back.
 
             Args:
                 tab_id: ID of the tab to execute script in
@@ -2472,6 +2474,8 @@ class FoxMCPTools:
 
             if response.get("type") == "response" and "data" in response:
                 result = response["data"].get("result")
+                if page_realm and not response["data"].get("pageRealm"):
+                    return "Failed to run it among the page's scripts: the add-on is too old for page_realm, update it"
                 if result is None:
                     return "Script ran, no return value"
                 return PageContent(result)
@@ -2720,10 +2724,14 @@ class FoxMCPTools:
         async def note_copy(before) -> str:
             """After keys that copy: wait for the app to fill the clipboard and
             remember it as the agent's, or say nothing was copied"""
-            deadline = time.monotonic() + COPY_WAIT_S
+            started = time.monotonic()
+            deadline = started + COPY_WAIT_S
             while time.monotonic() < deadline:
                 now = await clipboard_stamp()
                 if now is not None and now != before:
+                    # Theirs if they could have done it, and pasting theirs leaks it
+                    if WINDOW_INPUT and seconds_idle() < time.monotonic() - started:
+                        return ". The clipboard changed, but the person was using the computer, so it isn't taken as the agent's copy"
                     clipboard["agent"] = now
                     return ". The clipboard now holds the copy"
                 await asyncio.sleep(0.15)
@@ -2774,7 +2782,8 @@ class FoxMCPTools:
             gone: bool = False, timeout: float = 10.0
         ) -> str:
             """Wait until an element shows, or some text is on the page or in its
-            title, including across a navigation. Give one of selector, text or title
+            title, including across a navigation. Give one of selector, text or title.
+            Case doesn't matter. It sees the top page, not what is inside its frames
 
             Args:
                 tab_id: ID of the tab
@@ -2805,8 +2814,9 @@ class FoxMCPTools:
                         return f"Failed to wait: {data['invalid']}"
                     page = data
                     if data.get("met"):
+                        frames = ", though this page has frames, which this can't see into" if gone and data.get("frames") else ""
                         return (f"{what} {'is gone' if gone else 'is there'} after {time.monotonic() - started:.1f} s: "
-                                f"{data.get('title')} ({data.get('url')})")
+                                f"{data.get('title')} ({data.get('url')}){frames}")
                 if time.monotonic() >= deadline:
                     break
                 await asyncio.sleep(min(WAIT_POLL_S, max(deadline - time.monotonic(), 0)))
@@ -2844,50 +2854,65 @@ class FoxMCPTools:
             text: Optional[str] = None, timeout: float = 5.0
         ) -> str:
             """Choose an option in a dropdown, native or custom: opens it from the
-            given element, waits for the option to show, and clicks it
+            given element, waits for the option to show, and clicks it. The option's
+            whole text has to match, whatever its case, and only an option that
+            opening the dropdown brought up counts, not a like-named link elsewhere
 
             Args:
                 tab_id: ID of the tab
-                option: The text of the option to choose
+                option: The whole text of the option to choose
                 ref: The dropdown's ref from content_snapshot
                 selector: CSS selector of the dropdown
                 text: The dropdown's visible text or label
                 timeout: Most seconds to wait for the option to show (default: 5)
             """
-            look = {"action": "content.find_option", "data": {**target(tab_id, ref, selector, text), "option": option}}
-            found, error = await page_request(look)
+            if not option.strip():
+                raise ValueError("Give the text of the option to choose")
+            spot_of_it = target(tab_id, ref, selector, text)
+            before, error = await page_request({"action": "content.find_option",
+                                                "data": {**spot_of_it, "option": option, "beforeOpening": True}})
             if error:
                 return f"Failed to choose {option}: {error}"
-            if found.get("native"):
+            if before.get("native"):
                 return await content_type(tab_id, option, ref=ref, selector=selector, field=text)
-            opened = await content_click(tab_id, ref=ref, selector=selector, text=text)
+            opened = "It was already open"
+            # Clicking an open one would close it
+            if not before.get("open"):
+                opened = await content_click(tab_id, ref=ref, selector=selector, text=text)
+                if not opened.startswith("Clicked"):
+                    return opened
             deadline = time.monotonic() + timeout
-            while not found.get("ref") and time.monotonic() < deadline:
-                await asyncio.sleep(WAIT_POLL_S)
-                found, error = await page_request(look)
+            while True:
+                found, error = await page_request({"action": "content.find_option", "data": {**spot_of_it, "option": option}})
                 if error:
                     return f"Opened it, but failed to find {option}: {error}"
-            if not found.get("ref"):
-                shows = ", ".join(found.get("shown") or []) or "none"
-                return f'{opened}. No option named "{option}" showed within {timeout:g} s. Options showing: {shows}'
-            return await content_click(tab_id, ref=found["ref"])
+                if found.get("ref"):
+                    return await content_click(tab_id, ref=found["ref"])
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(WAIT_POLL_S)
+            shows = ", ".join(found.get("shown") or []) or "none"
+            return f'{opened}. No option named "{option}" showed within {timeout:g} s. New options showing: {shows}'
 
         @self._tool()
         async def page_fetch_json(tab_id: int, path: str, max_length: Optional[int] = TEXT_LIMIT) -> str:
-            """Read-only: a GET to the page's own origin, with its sign-in, returning
-            the status and body. It cannot write or reach another site
+            """A GET to the page's own http(s) origin, with its sign-in, returning the
+            status and body. For reading an API: it sends no body and can't reach
+            another site, but a site's GET route that changes something (a logout
+            link) still does
 
             Args:
                 tab_id: ID of the tab whose origin to read from
                 path: Path on that origin, such as /api/items?page=2
                 max_length: Most characters of the body to return (default: 20000; null for all)
             """
-            data, error = await page_request({"action": "content.fetch_json", "data": {"tabId": tab_id, "path": path}})
+            data, error = await page_request({"action": "content.fetch_json",
+                                              "data": {"tabId": tab_id, "path": path, "maxLength": max_length}})
             if error:
                 return f"Failed to fetch {path}: {error}"
             body = data.get("body", "")
-            if max_length is not None and len(body) > max_length:
-                body = f"{body[:max_length]}\n\n[Cut at {max_length} of {len(body)} characters: a larger max_length gets more]"
+            if data.get("length", 0) > len(body):
+                body = f"{body}\n\n[Cut at {len(body)} of {data['length']} characters: a larger max_length gets more]"
             return PageContent(f"{data.get('status')} {data.get('url')}\n{body}")
 
         # Snapshot Tool
@@ -2963,11 +2988,16 @@ class FoxMCPTools:
                 if error:
                     return f"Failed to click: {error}"
                 return f"{done} {data.get('clicked')}{effect_of(data)}"
-            copy_before = clipboard_sequence() if WINDOW_INPUT else None
-            real = await real_input(tab_id, ref, selector, "click", lambda bidi, context, element:
-                                    bidi.click(context, element, button=2 if right_click else 0,
-                                               clicks=2 if double_click and not right_click else 1),
-                                    target_name=text)
+            copy_before = None
+
+            async def click_for_real(bidi, context, element):
+                # Now, after any wait for the person to pause
+                nonlocal copy_before
+                copy_before = clipboard_sequence() if WINDOW_INPUT and not right_click else None
+                await bidi.click(context, element, button=2 if right_click else 0,
+                                 clicks=2 if double_click and not right_click else 1)
+
+            real = await real_input(tab_id, ref, selector, "click", click_for_real, target_name=text)
             if real is not None:
                 prep, error = real
                 if error:
@@ -3261,8 +3291,12 @@ class FoxMCPTools:
             copy_before = await clipboard_stamp() if COPY_KEYS.match(key) else None
 
             async def press_for_real(bidi, context, element):
+                nonlocal copy_before
                 if element:
                     await bidi.click(context, element)
+                # Now, after any wait for the person to pause
+                if copy_before is not None:
+                    copy_before = await clipboard_stamp()
                 await bidi.press(context, key)
 
             real = await real_input(tab_id, ref, selector, "key", press_for_real)

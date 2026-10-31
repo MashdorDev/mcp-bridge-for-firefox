@@ -18,8 +18,11 @@ user_pref("extensions.update.enabled", false);
 user_pref("extensions.update.autoUpdateDefault", true);
 user_pref("services.settings.server", "data:,#remote-settings-dummy/v1");
 user_pref("signon.rememberSignons", false);
+user_pref("browser.safebrowsing.phishing.enabled", false);
+user_pref("extensions.webextensions.uuids", "{\\"dummy@example.org\\":\\"1234\\"}");
+user_pref("browser.download.lastDir", "C:\\\\work\\\\dummy-data");
 '''
-KEPT = ['// Mozilla', 'browser.startup.page', 'autoUpdateDefault', 'signon.rememberSignons']
+KEPT = ['// Mozilla', 'browser.startup.page', 'autoUpdateDefault', 'signon.rememberSignons', 'webextensions.uuids', 'lastDir']
 
 
 def run(profile, *more):
@@ -33,7 +36,7 @@ def profile(tmp_path):
 
 def test_without_apply_it_only_shows_them(tmp_path):
     result = run(profile(tmp_path))
-    assert result.returncode == 0 and '4 of 8 lines' in result.stdout
+    assert result.returncode == 0 and '5 of 11 lines' in result.stdout
     assert (tmp_path / 'prefs.js').read_text(encoding='utf-8') == PREFS
     assert 'signon.rememberSignons' not in result.stdout
 
@@ -42,7 +45,8 @@ def test_apply_removes_them_and_keeps_a_backup(tmp_path):
     assert run(profile(tmp_path), '--apply').returncode == 0
     cleaned = (tmp_path / 'prefs.js').read_text(encoding='utf-8')
     assert all(kept in cleaned for kept in KEPT)
-    assert 'dummy' not in cleaned and 'disabledForTesting' not in cleaned and 'update.enabled' not in cleaned
+    assert 'remote-settings-dummy' not in cleaned and '%(server)s' not in cleaned
+    assert 'disabledForTesting' not in cleaned and 'update.enabled' not in cleaned and 'safebrowsing' not in cleaned
     assert list(tmp_path.glob('prefs.js.*.bak'))[0].read_text(encoding='utf-8') == PREFS
 
 

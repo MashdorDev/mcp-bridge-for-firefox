@@ -126,13 +126,14 @@ Use it with AI clients you trust, and consider a separate Firefox profile for ag
 
 ## Permission prompts in Claude Code
 
-Auto mode judges each call by what it can see, so a raw script gets the worst reading, and one refusal makes it stricter on the next few calls. The named tools (`content_read`, `content_wait_for`, `content_dialogs`, `content_select_option`, `page_fetch_json`) cover most of what scripts were used for. For the rest, ask rules are checked first, so you get a prompt in place of a refusal:
+Auto mode judges each call by what it can see, so a raw script gets the worst reading, and one refusal makes it stricter on the next few calls. The named tools (`content_read`, `content_wait_for`, `content_dialogs`, `content_select_option`) cover most of what scripts were used for. For the rest, ask rules are checked first, so you get a prompt in place of a refusal:
 
 ```json
 {
   "permissions": {
     "ask": [
       "mcp__firefox__content_execute_script",
+      "mcp__firefox__page_fetch_json",
       "mcp__firefox__content_click",
       "mcp__firefox__content_type",
       "mcp__firefox__content_press_key"

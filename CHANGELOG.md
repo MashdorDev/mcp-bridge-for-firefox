@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`content_read` and `content_wait_for`.** The text of one element, and a wait for an element, text or title, which took a script or a whole page of text before.
-- **`content_dialogs`, `content_select_option` and `page_fetch_json`.** Open dialogs and what is stuck over a page, custom dropdowns, and a read-only GET on the page's own origin, without a script.
+- **`content_dialogs`, `content_select_option` and `page_fetch_json`.** Open dialogs and what is stuck over a page, custom dropdowns, and a GET on the page's own origin, without a script.
 - **An agent profile.** Tick "This Firefox is for agents" in a separate Firefox profile and agents act there unless one is chosen by name. In its own process, real typing never touches the windows you are using, with no blink and no wait. See `docs/configuration.md`.
 
 ### Added

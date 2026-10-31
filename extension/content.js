@@ -40,7 +40,7 @@ function refFor(el) {
 
 function describe(el) {
   const role = el.getAttribute('role') || el.tagName.toLowerCase();
-  const name = (el.getAttribute('aria-label') || el.innerText || el.value || el.placeholder ||
+  const name = (el.getAttribute('aria-label') || el.innerText || (el.type === 'password' ? '' : el.value) || el.placeholder ||
     el.title || el.alt || '').replace(/\s+/g, ' ').trim().slice(0, 80);
   const extras = [];
   if (el.type && el.tagName === 'INPUT') extras.push('type=' + el.type);
@@ -65,6 +65,8 @@ function snapshot(maxElements) {
 
 // Long lists draw only what is near the screen, so a snapshot of one looks
 // complete. Where the page says how many there are, say what is missing.
+const MAX_LIST_NOTES = 5;
+
 function unrenderedRows() {
   const notes = [];
   for (const list of document.querySelectorAll('[aria-rowcount]')) {
@@ -72,14 +74,17 @@ function unrenderedRows() {
     const drawn = list.querySelectorAll('[role=row], tr').length;
     if (total > drawn && isVisible(list)) notes.push(`... ${describe(list)} has ${total} rows, ${drawn} drawn: content_scroll it for the rest`);
   }
-  const parents = new Set([...document.querySelectorAll('[aria-setsize]')].map(item => item.parentElement));
-  for (const list of parents) {
-    if (!list) continue;
-    const items = list.querySelectorAll(':scope > [aria-setsize]');
-    const total = Number(items[0].getAttribute('aria-setsize'));
-    if (total > items.length && isVisible(list)) notes.push(`... ${describe(list)} has ${total} items, ${items.length} drawn: content_scroll it for the rest`);
+  // By their list, as an item's link can carry the count rather than the item
+  const lists = new Map();
+  for (const item of document.querySelectorAll('[aria-setsize]')) {
+    const list = item.closest('[role=list], [role=listbox], [role=tree], [role=menu], [role=grid], ul, ol') || item.parentElement;
+    if (list) lists.set(list, [...(lists.get(list) || []), item]);
   }
-  return notes;
+  for (const [list, items] of lists) {
+    const total = Number(items[0].getAttribute('aria-setsize'));
+    if (total > items.length && isVisible(list)) notes.push(`... ${describe(list)} has ${total} items, ${items.length} drawn: scroll or page it for the rest`);
+  }
+  return notes.slice(0, MAX_LIST_NOTES);
 }
 
 // What scrolling at this element moves: the nearest container that can still go
@@ -312,6 +317,8 @@ const BACKDROP_COVERS = 0.9;
 const INVISIBLE_OPACITY = 0.05;
 const MAX_OPTIONS_LISTED = 20;
 const FETCH_TIMEOUT_MS = 20000;
+// Messages to the server are capped at 64 MB, whatever max_length says
+const FETCH_BODY_MAX = 32 * 1024 * 1024;
 
 function shownOpacity(el) {
   let opacity = 1;
@@ -325,8 +332,9 @@ function openDialogs() {
   // A stuck backdrop often has no role, and only shows by taking every click
   for (let node = onTop; node && node !== document.body; node = node.parentElement) {
     const rect = node.getBoundingClientRect();
+    // With nothing in it: an app's whole layout can be fixed too
     if (getComputedStyle(node).position === 'fixed' && rect.width * rect.height >= BACKDROP_COVERS * innerWidth * innerHeight &&
-        ![...found].some(dialog => dialog.contains(node))) found.add(node);
+        !(node.innerText || '').trim() && ![...found].some(dialog => dialog.contains(node))) found.add(node);
   }
   return [...found].map(el => ({
     ref: refFor(el),
@@ -341,52 +349,64 @@ function openDialogs() {
 }
 
 const OPTIONS = '[role=option], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [role=treeitem], [data-value], li';
+// What already showed before a dropdown was opened, such as a sidebar's list items
+let shownBeforeOpening = new WeakSet();
+
+function shownOptions() {
+  return [...document.querySelectorAll(OPTIONS)].filter(el => isShown(el) && el.getAttribute('aria-disabled') !== 'true');
+}
 
 function findOption(data) {
   const dropdown = findTarget(data);
   if (dropdown instanceof HTMLSelectElement) return { native: true };
+  if (data.beforeOpening) {
+    const open = dropdown.getAttribute('aria-expanded') === 'true';
+    shownBeforeOpening = new WeakSet(open ? [] : shownOptions());
+    return { open };
+  }
   const wanted = data.option.replace(/\s+/g, ' ').trim().toLowerCase();
-  // The dropdown's own text is often the option now chosen
-  const options = [...document.querySelectorAll(OPTIONS)]
-    .filter(el => isShown(el) && !el.contains(dropdown) && !dropdown.contains(el));
+  const options = shownOptions().filter(el => !shownBeforeOpening.has(el) && el !== dropdown && !el.contains(dropdown));
   let best = null;
   for (const el of options) {
-    const have = nameOf(el);
-    const match = have === wanted ? 2 : have.includes(wanted) ? 1 : 0;
-    if (!match) continue;
-    const score = [match, el.matches('li') ? 0 : 1, -el.getElementsByTagName('*').length];
+    if (nameOf(el) !== wanted) continue;
+    const score = [el.matches('li') ? 0 : 1, -el.getElementsByTagName('*').length];
     if (!best || outranks(score, best.score)) best = { el, score };
   }
   return best ? { ref: refFor(best.el) }
     : { shown: options.slice(0, MAX_OPTIONS_LISTED).map(el => (el.innerText || '').trim().slice(0, 60)).filter(Boolean) };
 }
 
-async function fetchJson({ path }) {
+async function fetchJson({ path, maxLength }) {
+  // A file:// page's origin is "null", which would equal any other's
+  if (!/^https?:$/.test(location.protocol)) throw new Error(`only an http(s) page's origin can be read, not ${location.protocol}`);
   const url = new URL(path, location.href);
   if (url.origin !== location.origin) throw new Error(`${url.origin} is not this page's origin (${location.origin})`);
-  // The page's own fetch: this script's is sent as the add-on's, without the page's origin
+  // Sent as the page, which this script's own fetch isn't, and out of reach of
+  // anything the page's scripts put in place of window.fetch
   const options = cloneInto({ method: 'GET', credentials: 'same-origin', headers: { Accept: 'application/json' } }, window);
   const timer = new Promise((_, reject) => setTimeout(
     () => reject(new Error(`no answer in ${FETCH_TIMEOUT_MS / 1000} s`)), FETCH_TIMEOUT_MS));
-  const answer = await Promise.race([window.wrappedJSObject.fetch(url.href, options), timer]);
+  const answer = await Promise.race([content.fetch(url.href, options), timer]);
   if (new URL(answer.url).origin !== location.origin) throw new Error(`it redirected to another origin (${new URL(answer.url).origin})`);
-  return { status: answer.status, url: answer.url, body: await Promise.race([answer.text(), timer]) };
+  const body = await Promise.race([answer.text(), timer]);
+  return { status: answer.status, url: answer.url, length: body.length, body: body.slice(0, maxLength ?? FETCH_BODY_MAX) };
 }
 
 function waitCheck({ selector, text, title, gone }) {
   let seen;
   if (selector) {
     try {
-      seen = [...document.querySelectorAll(selector)].some(isShown);
+      seen = [...document.querySelectorAll(selector)].some(el => isShown(el) && shownOpacity(el) >= INVISIBLE_OPACITY);
     } catch (error) {
       return { invalid: error.message };
     }
   } else if (text) {
-    seen = (document.body?.innerText || '').includes(text);
+    // Lower case, as styles change what innerText says: "Saving" can read "SAVING"
+    seen = (document.body?.innerText || '').toLowerCase().includes(text.toLowerCase());
   } else {
-    seen = document.title.includes(title);
+    seen = document.title.toLowerCase().includes(title.toLowerCase());
   }
-  return { met: gone ? !seen : seen, title: document.title, url: location.href };
+  return { met: gone ? !seen : seen, title: document.title, url: location.href, frames: Boolean(document.querySelector('iframe, frame')) };
 }
 
 // What a click changed that the agent cannot see in its own result: the
@@ -1749,8 +1769,9 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       case 'read': {
         const el = findTarget(data);
-        const content = /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? el.value : el.innerText ?? el.textContent;
-        sendResponse({ target: describe(el), text: (content || '').trim() });
+        if (el.type === 'password') throw new Error('A password field\'s value is not read');
+        const text = /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? el.value : el.innerText ?? el.textContent;
+        sendResponse({ target: describe(el), text: (text || '').trim() });
         break;
       }
 
