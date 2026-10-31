@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`content_read` and `content_wait_for`.** The text of one element, and a wait for an element, text or title, which took a script or a whole page of text before.
 - **An agent profile.** Tick "This Firefox is for agents" in a separate Firefox profile and agents act there unless one is chosen by name. In its own process, real typing never touches the windows you are using, with no blink and no wait. See `docs/configuration.md`.
 
 ### Fixed

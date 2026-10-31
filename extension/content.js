@@ -285,6 +285,22 @@ function findTarget({ ref, selector, targetName }) {
   return all.find(isShown) || all[0];
 }
 
+function waitCheck({ selector, text, title, gone }) {
+  let seen;
+  if (selector) {
+    try {
+      seen = [...document.querySelectorAll(selector)].some(isShown);
+    } catch (error) {
+      return { invalid: error.message };
+    }
+  } else if (text) {
+    seen = (document.body?.innerText || '').includes(text);
+  } else {
+    seen = document.title.includes(title);
+  }
+  return { met: gone ? !seen : seen, title: document.title, url: location.href };
+}
+
 // What a click changed that the agent cannot see in its own result: the
 // address, the focus (a text editor opening), menus and dialogs, and the
 // clicked element's own expanded or checked state. Canvas apps change only
@@ -1642,6 +1658,17 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
           .catch(error => sendResponse({ error: error.message }));
         break;
       }
+
+      case 'read': {
+        const el = findTarget(data);
+        const content = /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? el.value : el.innerText ?? el.textContent;
+        sendResponse({ target: describe(el), text: (content || '').trim() });
+        break;
+      }
+
+      case 'waitCheck':
+        sendResponse(waitCheck(data));
+        break;
 
       case 'hover': {
         const point = targetPoint(data);

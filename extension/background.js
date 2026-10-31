@@ -1491,11 +1491,13 @@ async function handleContentAction(id, action, data) {
       case 'content.check_typed':
       case 'content.real_input_arrived':
       case 'content.snapshot':
+      case 'content.read':
+      case 'content.wait_check':
       case 'content.click':
       case 'content.type':
       case 'content.press_key':
       case 'content.capture_file_input': {
-        const pageAction = { 'content.snapshot': 'snapshot', 'content.click': 'click',
+        const pageAction = { 'content.snapshot': 'snapshot', 'content.read': 'read', 'content.wait_check': 'waitCheck', 'content.click': 'click',
           'content.type': 'type', 'content.press_key': 'pressKey',
           'content.capture_file_input': 'captureFileInput', 'content.real_input_prep': 'realInputPrep',
           'content.check_typed': 'checkTypedText', 'content.caret_to_end': 'caretToEnd', 'content.real_pointer_prep': 'realPointerPrep',

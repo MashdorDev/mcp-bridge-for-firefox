@@ -77,6 +77,9 @@ REAL_INPUT_MISS = contextvars.ContextVar("real_input_miss", default="")
 CALL_BROWSER = contextvars.ContextVar("call_browser", default=None)
 # Firefox updates a window's title and a tab's visibility shortly after activating it
 WINDOW_SETTLE_DELAYS = (0.2, 0.4, 0.8)
+# content_wait_for: how often it looks, and the longest a caller can ask for
+WAIT_POLL_S = 0.25
+WAIT_MAX_S = 120.0
 # How long after this server starts an add-on may take to find it: the add-on
 # retries every 5 s, or every 30 s once it has been failing for a while
 RECONNECT_WINDOW_S = 35
@@ -2469,7 +2472,7 @@ class FoxMCPTools:
 
             return f"Unable to execute script in tab {tab_id}"
 
-        async def page_request(message: Dict[str, Any]):
+        async def page_request(message: Dict[str, Any], timeout: float = 30.0):
             """Send a {"action", "data"} content request
 
             Returns (data, None) on success and (None, error message) on failure.
@@ -2481,7 +2484,7 @@ class FoxMCPTools:
                 **message,
                 **({"to_browser": pinned} if pinned else {}),
                 "timestamp": datetime.now().isoformat()
-            })
+            }, timeout=timeout)
             if "error" in response:
                 return None, response["error"]
             if response.get("type") == "response" and "data" in response:
@@ -2729,6 +2732,78 @@ class FoxMCPTools:
             return ("Failed to paste: the clipboard holds something the agent did not copy, most likely the "
                     "person's own. Copy what you mean to paste first (Control+c on it, or content_copy_image), "
                     "or pass allow_clipboard=true only if the person asked to paste their clipboard")
+
+        # Reading one element and waiting for a state, which otherwise take a script
+        @self._tool()
+        async def content_read(
+            tab_id: int, ref: Optional[str] = None, selector: Optional[str] = None, text: Optional[str] = None,
+            max_length: Optional[int] = TEXT_LIMIT
+        ) -> str:
+            """Get the text of one element, such as a side panel, a dialog or a table,
+            rather than the whole page. A form field gives its value
+
+            Args:
+                tab_id: ID of the tab
+                ref: The element's ref from content_snapshot
+                selector: CSS selector for the element
+                text: The element's visible text or label
+                max_length: Most characters to return (default: 20000; null for all)
+            """
+            data, error = await page_request({"action": "content.read", "data": target(tab_id, ref, selector, text)})
+            if error:
+                return f"Failed to read: {error}"
+            found = data.get("text", "")
+            if not found:
+                return f"{data.get('target')} has no text"
+            if max_length is not None and len(found) > max_length:
+                found = f"{found[:max_length]}\n\n[Cut at {max_length} of {len(found)} characters: a larger max_length gets more]"
+            return PageContent(found)
+
+        @self._tool()
+        async def content_wait_for(
+            tab_id: int, selector: Optional[str] = None, text: Optional[str] = None, title: Optional[str] = None,
+            gone: bool = False, timeout: float = 10.0
+        ) -> str:
+            """Wait until an element shows, or some text is on the page or in its
+            title, including across a navigation. Give one of selector, text or title
+
+            Args:
+                tab_id: ID of the tab
+                selector: CSS selector of an element that should show
+                text: Text that should be on the page
+                title: Text that should be in the page's title
+                gone: Wait for it to go away instead
+                timeout: Most seconds to wait (default: 10, at most 120)
+            """
+            wanted = {name: value for name, value in (("selector", selector), ("text", text), ("title", title)) if value}
+            if len(wanted) != 1:
+                raise ValueError("Give one of selector, text or title")
+            what = next(iter(wanted.items()))
+            what = f'{what[0]} "{what[1]}"'
+            started = time.monotonic()
+            deadline = started + min(timeout, WAIT_MAX_S)
+            page, last_error = None, None
+            while True:
+                data, error = await page_request(
+                    {"action": "content.wait_check", "data": {"tabId": tab_id, "gone": gone, **wanted}},
+                    timeout=max(deadline - time.monotonic(), WAIT_POLL_S))
+                # A page between navigations can't answer yet, but these won't change
+                if error and ("MCP Bridge settings" in error or "paused the agent" in error):
+                    return f"Failed to wait: {error}"
+                last_error = error
+                if data:
+                    if data.get("invalid"):
+                        return f"Failed to wait: {data['invalid']}"
+                    page = data
+                    if data.get("met"):
+                        return (f"{what} {'is gone' if gone else 'is there'} after {time.monotonic() - started:.1f} s: "
+                                f"{data.get('title')} ({data.get('url')})")
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(min(WAIT_POLL_S, max(deadline - time.monotonic(), 0)))
+            state = f"The page is {page.get('title')} ({page.get('url')})" if page else "The page did not answer"
+            return (f"Timed out after {min(timeout, WAIT_MAX_S):g} s waiting for {what}{' to go' if gone else ''}. {state}"
+                    + (f". Last error: {last_error}" if last_error else ""))
 
         # Snapshot Tool
         @self._tool()
