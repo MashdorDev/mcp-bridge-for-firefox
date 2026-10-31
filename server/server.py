@@ -432,12 +432,18 @@ class FoxMCPServer:
         except (TypeError, ValueError):
             browser.real_input_port = 0
         browser.app = str(data.get('app') or 'firefox').lower()[:20]
+        instance_id = str(data.get('instance_id') or '')
         if data.get('name'):
             browser.name = str(data['name'])[:60]
+        elif instance_id:
+            # From the profile's own id, not the order it connected in: the same
+            # profile was "Firefox 1" on one server and "Firefox 2" on another,
+            # so a name remembered from one could select another profile.
+            label = 'Thunderbird' if browser.app == 'thunderbird' else 'Firefox'
+            browser.name = f"{label} {instance_id[:4]}"
         elif browser.app == 'thunderbird' and browser.name.startswith('Firefox '):
             browser.name = 'Thunderbird ' + browser.name[len('Firefox '):]
 
-        instance_id = str(data.get('instance_id') or '')
         if not instance_id or instance_id == browser.key:
             return
 

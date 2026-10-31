@@ -2119,7 +2119,8 @@ class FoxMCPTools:
             try:
                 chosen = self.websocket_server.select_browser(browser)
             except ValueError as e:
-                return str(e)
+                # A failure, not an answer that happens to name the browser
+                raise ToolError(str(e)) from e
             return f"Now acting on {chosen.name} (id {chosen.key[:8]})"
 
     def _setup_debug_tools(self):
