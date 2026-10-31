@@ -19,6 +19,7 @@ from port_coordinator import get_port_by_type, coordinated_test_ports
 from server.server import FoxMCPServer, port_is_free
 from firefox_test_utils import FirefoxTestManager, resolve_firefox_path
 from test_config import FIREFOX_TEST_CONFIG
+from shards import assign_files
 
 # Store allocated ports for Firefox configuration
 _allocated_test_ports = {}
@@ -353,3 +354,29 @@ def sample_bookmark_data():
             "children": []
         }
     ]
+
+
+# What a test that starts Firefox costs against one that doesn't, roughly
+FIREFOX_TEST_WEIGHT = 40
+FIREFOX_FIXTURES = {'server_with_extension', 'firefox_with_test_ports'}
+
+
+def pytest_collection_modifyitems(config, items):
+    """TEST_SHARD=1/3 runs one part of the suite, for CI to run the parts at once"""
+    spec = os.environ.get('TEST_SHARD')
+    if not spec:
+        return
+    index, count = (int(part) for part in spec.split('/'))
+    # For CI to compare with what ran: a part that collected something else could
+    # work out another split, and leave a file to no part
+    if os.environ.get('TEST_SHARD_COLLECTED'):
+        with open(os.environ['TEST_SHARD_COLLECTED'], 'w') as report:
+            report.write(str(len(items)))
+    weights = {}
+    for item in items:
+        name = item.nodeid.split('::')[0]
+        heavy = FIREFOX_FIXTURES.intersection(item.fixturenames)
+        weights[name] = weights.get(name, 0) + (FIREFOX_TEST_WEIGHT if heavy else 1)
+    mine = set(assign_files(weights, count)[index - 1])
+    config.hook.pytest_deselected(items=[item for item in items if item.nodeid.split('::')[0] not in mine])
+    items[:] = [item for item in items if item.nodeid.split('::')[0] in mine]
