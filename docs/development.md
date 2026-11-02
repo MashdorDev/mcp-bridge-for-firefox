@@ -68,7 +68,7 @@ foxmcp/
 │   ├── server.py    # WebSocket server, request correlation, CLI
 │   └── mcp_tools.py # The 39 MCP tool definitions
 ├── tests/           # Test suite (unit/, integration/, fixtures/)
-├── scripts/         # install-xpi.sh, install-from-github.sh
+├── scripts/         # install-xpi.sh
 ├── venv/            # Python virtual environment
 └── Makefile         # Build system
 ```
@@ -274,11 +274,11 @@ test is fine.
 
 ## Release Process
 
-1. Bump the version in `extension/manifest.json`, `package.json`,
-   `scripts/install-from-github.sh` and the install URL in `README.md`
+1. Bump the version in every file `scripts/check-version.sh` lists (manifest,
+   package.json, pyproject, the plugin pins, the install URL in `README.md`)
 2. Rename `## [Unreleased]` in `CHANGELOG.md` to `## [1.2.0] - <date>` and add
    the link reference at the bottom
-3. `scripts/check-version.sh 1.2.0` — fails unless all five files agree
+3. `scripts/check-version.sh 1.2.0` — fails unless every file agrees
 4. Merge it, then sign and publish by hand:
    `web-ext sign --channel unlisted` from `extension/` with the AMO key, then
    `gh release create v1.2.0 --target <merge commit>` with the signed xpi attached
