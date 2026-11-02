@@ -2470,7 +2470,11 @@ class FoxMCPTools:
             response = await self.websocket_server.send_request_and_wait(request)
 
             if "error" in response:
-                return f"Error executing script: {response['error']}"
+                # Most of these are a script waiting on something rather than a hung page
+                waiting = (" A script that awaits something that never finishes (a fetch, a promise) ends this way "
+                           "too, with the page fine: page_fetch_json and content_wait_for have their own limits."
+                           if "did not answer" in response["error"] else "")
+                return f"Error executing script: {response['error']}{waiting}"
 
             if response.get("type") == "response" and "data" in response:
                 result = response["data"].get("result")

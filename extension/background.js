@@ -1038,6 +1038,74 @@ async function handleTabsAction(id, action, data) {
   }
 }
 
+// A script still awaiting something when its page goes away never answers:
+// executeScript stays pending, and the tool waited out its 30 s to call a healthy
+// page hung. Firefox says "loading" for more than that: a pushState on a page
+// still loading, or a load that ends in a download or a 204, leave the document
+// and the script where they are, and reporting those would invite a rerun of
+// something still running. So a mark set by the script's own run decides: the
+// document has gone when the mark has. Two looks, as a look can fail mid-swap.
+const SCRIPT_PROBE_MS = 250;
+const SCRIPT_PROBE_LIMIT_MS = 1000;
+const SCRIPT_GIVE_UP_MS = 60000;
+function executeUntilNavigated(tabId, code, strict = '') {
+  const mark = `__foxmcpScript${crypto.randomUUID().replace(/-/g, '')}`;
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+  let ended = false;
+  let onUpdated, onRemoved, giveUp;
+  const gone = new Promise((resolve, reject) => {
+    let probing = false;
+    const lookForMark = async () => {
+      if (probing) return;
+      probing = true;
+      let seen = false;
+      let absent = 0;
+      while (!ended) {
+        // undefined: no mark, or no answer from a document on its way out. null: still no answer at all
+        const [found] = await Promise.race([
+          browser.tabs.executeScript(tabId, { code: `window.${mark}`, runAt: 'document_start' }).catch(() => []),
+          wait(SCRIPT_PROBE_LIMIT_MS).then(() => [null]),
+        ]);
+        const tab = await browser.tabs.get(tabId).catch(() => null);
+        if (!tab) break;
+        if (found) {
+          seen = true;
+          absent = 0;
+          if (tab.status === 'complete') break;
+        } else if (found === undefined) {
+          // Not seen yet: on a page still loading, the script may not have started
+          absent = seen || tab.status === 'complete' ? absent + 1 : 0;
+          if (absent >= 2) {
+            reject(new Error('the page navigated away while it was waiting, so its result is lost. ' +
+              'It may have done part of its work'));
+            break;
+          }
+        }
+        await wait(SCRIPT_PROBE_MS);
+      }
+      probing = false;
+    };
+    onUpdated = (changedId, change) => {
+      if (changedId === tabId && change.status === 'loading') lookForMark();
+    };
+    onRemoved = removedId => {
+      if (removedId === tabId) reject(new Error('the tab was closed while it was waiting'));
+    };
+    // Nothing is left to hear it by then, and this holds two listeners
+    giveUp = setTimeout(() => reject(new Error(`it did not finish in ${SCRIPT_GIVE_UP_MS / 1000} s`)), SCRIPT_GIVE_UP_MS);
+    browser.tabs.onUpdated.addListener(onUpdated);
+    browser.tabs.onRemoved.addListener(onRemoved);
+  });
+  // void: a script that ends in a declaration has no value, and must not take this one's
+  return Promise.race([browser.tabs.executeScript(tabId, { code: `${strict}void (window.${mark} = true);${code}` }), gone])
+    .finally(() => {
+      ended = true;
+      clearTimeout(giveUp);
+      browser.tabs.onUpdated.removeListener(onUpdated);
+      browser.tabs.onRemoved.removeListener(onRemoved);
+    });
+}
+
 // Tab groups handlers
 async function handleTabGroupsAction(id, action, data) {
   try {
@@ -1532,18 +1600,17 @@ async function handleContentAction(id, action, data) {
           const strict = /^\s*(['"])use strict\1/.test(script) ? '"use strict";' : '';
           let executeResults;
           try {
-            executeResults = await browser.tabs.executeScript(data.tabId, data.pageRealm
-              ? { code: pageRealmCode(script) } : { code: `${strict}{\n${script}\n}` });
+            executeResults = await (data.pageRealm
+              ? executeUntilNavigated(data.tabId, pageRealmCode(script))
+              : executeUntilNavigated(data.tabId, `{\n${script}\n}`, strict));
           } catch (error) {
             // Never run again outside the page, where it would find nothing of the page's
             if (data.pageRealm) throw error;
             if (/return not in function|await .*is only valid/.test(error.message)) {
-              executeResults = await browser.tabs.executeScript(data.tabId, {
-                code: `(async () => {\n${script}\n})()`
-              });
+              executeResults = await executeUntilNavigated(data.tabId, `(async () => {\n${script}\n})()`);
             } else if (/^redeclaration of var /.test(error.message)) {
               // A var and a function of the same name are legal only outside a block
-              executeResults = await browser.tabs.executeScript(data.tabId, { code: script });
+              executeResults = await executeUntilNavigated(data.tabId, script, strict);
             } else {
               throw error;
             }
