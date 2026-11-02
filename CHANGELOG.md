@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-11-02
+
 ### Changed
 - **"Run scripts in pages" starts off on a new install.** `content_execute_script`, `page_fetch_json` and `content_execute_predefined` are refused until the person turns it on in the add-on's options, and the refusal says where. A profile that had connected to a server on an earlier version keeps it on unless it was already turned off, decided once on the first run of 1.15.0. This is for the addons.mozilla.org listing, whose policy does not allow running code from outside the add-on without the person's choice.
 
