@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **"Run scripts in pages" starts off on a new install.** `content_execute_script`, `page_fetch_json` and `content_execute_predefined` are refused until the person turns it on in the add-on's options, and the refusal says where. A profile updated from an earlier version keeps it on unless it was already turned off. This is for the addons.mozilla.org listing, whose policy does not allow running code from outside the add-on without the person's choice.
+
 ### Added
 - **A click says what it did to the page.** No change seen in 0.3 s, the page's content changed, or a row became selected, and a label's checkbox counts as the target. Real input is still never redone.
 - **`content_dialogs` flags a panel with only a title and a close control**, as one that may never have loaded.
@@ -15,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Added text no longer breaks rich editors.** A second `caretToEnd` had replaced the first and put the caret on the editor element: Draft.js threw and stopped drawing, while the tool reported success. Text now goes after the last text, on a blank last line, or after a trailing image or mention.
 - **A script left waiting by a navigation says so in about 2 s**, instead of 30 s and "probably hung". So does one whose tab was closed.
+- **`scripts/install-from-github.sh` installed upstream FoxMCP**, downloading `foxmcp@codemud.org.xpi` from ThinkerYzu/foxmcp. It now uses this repository and `foxmcp@dorzairi.dev.xpi`.
 
 ## [1.14.0] - 2026-10-31
 

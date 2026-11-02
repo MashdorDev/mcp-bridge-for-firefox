@@ -11,6 +11,13 @@ let isConnected = false;
 // The person's settings (settings.js), kept current as they change them
 let settings = { ...SETTINGS_DEFAULTS };
 loadSettings().then(saved => { settings = saved; updateBadge(); });
+// "Run scripts in pages" became opt-in in 1.15.0. A profile updated from an
+// older version keeps the behaviour it had, unless the person already chose.
+browser.runtime.onInstalled.addListener(async ({ reason }) => {
+  if (reason !== 'update') return;
+  const { allowScripts } = await browser.storage.local.get('allowScripts');
+  if (allowScripts === undefined) await browser.storage.local.set({ allowScripts: true });
+});
 browser.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   for (const [key, change] of Object.entries(changes)) {
@@ -459,6 +466,9 @@ async function loadConfig() {
   console.log('🌐 WebSocket URL will be:', `ws://${CONFIG.hostname}:${CONFIG.port}`);
 
   if (result.testPort || result.testHostname) {
+    // Test profiles are new installs, where scripts start off
+    const { allowScripts } = await browser.storage.local.get('allowScripts');
+    if (allowScripts === undefined) await browser.storage.local.set({ allowScripts: true });
     console.log('🧪 Test overrides active:', {
       testPort: result.testPort,
       testHostname: result.testHostname
@@ -540,7 +550,7 @@ async function refusalFor(action, data) {
     return 'The person using this Firefox has paused the agent. They can resume it from the MCP Bridge button in the toolbar.';
   }
   if (!settings[permission]) {
-    return `"${PERMISSION_NAMES[permission]}" is turned off in this browser's MCP Bridge settings.`;
+    return `"${PERMISSION_NAMES[permission]}" is turned off in this browser's MCP Bridge settings. The person can turn it on in the add-on's options (about:addons).`;
   }
   if (action === 'windows.create' && data.incognito && !settings.allowPrivate) {
     return 'The agent is not allowed in private windows (MCP Bridge settings).';

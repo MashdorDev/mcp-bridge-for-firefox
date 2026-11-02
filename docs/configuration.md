@@ -478,16 +478,18 @@ The reconnect timings (retry interval, give up after, ping timeout) stay in
 **Pause the agent** refuses every request until it is turned off, and the agent
 lets go of its tabs. The same switch is in the toolbar popup.
 
-**Allowed** lists ten groups of actions, each on by default and each able to be
-turned off on its own. A refused request reaches the agent as an error naming the
-group, such as `"Run scripts in pages" is turned off in this browser's MCP Bridge
-settings.`
+**Allowed** lists ten groups of actions, each able to be turned on or off on its
+own. All are on by default except "Run scripts in pages", which a new install
+starts with off, so that running code an agent sends is the person's choice. A
+profile updated from a version before 1.15.0 keeps it on. A refused request
+reaches the agent as an error naming the group, such as `"Run scripts in pages"
+is turned off in this browser's MCP Bridge settings.`
 
 | Setting | Covers |
 |---|---|
 | Read pages and take screenshots | `content_get_text`, `content_get_html`, `content_snapshot`, `tabs_capture_screenshot` |
 | Click, type and press keys | `content_click`, `content_hover`, `content_drag`, `content_type`, `content_press_key`, and real input |
-| Run scripts in pages | `content_execute_script`, and so `content_execute_predefined` |
+| Run scripts in pages | `content_execute_script`, `page_fetch_json`, and so `content_execute_predefined` |
 | Put files on upload fields | `content_upload_files` (with a trigger element, it also needs "Click, type and press keys") |
 | Copy images and paste | `content_copy_image`, `content_paste` |
 | Open, close, switch and navigate tabs | `tabs_list`, `tabs_create`, `tabs_close`, `tabs_switch`, `tabs_move`, and the `navigation_*` tools |
