@@ -11,12 +11,18 @@ let isConnected = false;
 // The person's settings (settings.js), kept current as they change them
 let settings = { ...SETTINGS_DEFAULTS };
 loadSettings().then(saved => { settings = saved; updateBadge(); });
-// "Run scripts in pages" became opt-in in 1.15.0. A profile updated from an
-// older version keeps the behaviour it had, unless the person already chose.
-browser.runtime.onInstalled.addListener(async ({ reason }) => {
-  if (reason !== 'update') return;
-  const { allowScripts } = await browser.storage.local.get('allowScripts');
-  if (allowScripts === undefined) await browser.storage.local.set({ allowScripts: true });
+// "Run scripts in pages" became opt-in in 1.15.0. The first run of 1.15.0 or
+// later decides once: a profile that already had an instanceId (written by
+// every version since several profiles could connect) is an older install and
+// keeps scripts on, unless the person had already chosen. A new install keeps
+// the default. Not onInstalled: it does not fire for an update applied while
+// the add-on was disabled. This get is issued before browserIdentity() can
+// write an instanceId, so it sees the profile as it was.
+browser.storage.local.get(['allowScripts', 'instanceId', 'scriptsOptInChecked']).then(stored => {
+  if (stored.scriptsOptInChecked) return;
+  const update = { scriptsOptInChecked: true };
+  if (stored.allowScripts === undefined && stored.instanceId) update.allowScripts = true;
+  return browser.storage.local.set(update);
 });
 browser.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;

@@ -14,7 +14,7 @@ const SETTINGS_DEFAULTS = {
   allowRead: true,
   allowInteract: true,
   // Off for a new install: running code an agent sends is the person's choice.
-  // Installs from before 1.15.0 keep it on (background.js, onInstalled).
+  // Installs from before 1.15.0 keep it on (background.js, scriptsOptInChecked).
   allowScripts: false,
   allowUploads: true,
   allowClipboard: true,
