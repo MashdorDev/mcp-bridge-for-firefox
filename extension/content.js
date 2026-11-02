@@ -326,6 +326,25 @@ function shownOpacity(el) {
   return opacity;
 }
 
+// A panel that opened with no more than a title and a way to close it: on heavy
+// apps they mounted with only their close button and never filled in. Anything
+// else that could be its content says no: a dialog of a question and buttons, a
+// date grid and a menu of links are all complete, and being wrong here costs a
+// reload that loses what is behind the dialog.
+const CLOSE_NAME = /^(close|dismiss|x|\u00d7|\u2715|\u2716)$/i;
+function dialogUnfilled(el) {
+  const controls = [...el.querySelectorAll(DIALOG_BUTTONS)];
+  const nameOf = control => (control.getAttribute('aria-label') || control.innerText || control.value || '').trim();
+  if (controls.length > 1 || (controls.length === 1 && !CLOSE_NAME.test(nameOf(controls[0])))) return false;
+  if (el.querySelector('input:not([type=hidden]), textarea, select, img, canvas, video, audio, iframe, object, embed, meter, progress, [role=progressbar], [contenteditable]')) return false;
+  // Unseen from here: a custom element's shadow root can hold all of it
+  if ([el, ...el.querySelectorAll('*')].some(node => node.localName.includes('-') || node.shadowRoot)) return false;
+  if ([...el.querySelectorAll('svg')].some(svg => !controls.some(control => control.contains(svg)))) return false;
+  const copy = el.cloneNode(true);
+  copy.querySelectorAll(`h1, h2, h3, [role=heading], ${DIALOG_BUTTONS}`).forEach(part => part.remove());
+  return !copy.textContent.trim();
+}
+
 function openDialogs() {
   const found = new Set([...document.querySelectorAll(DIALOGS)].filter(isShown));
   const onTop = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
@@ -338,6 +357,7 @@ function openDialogs() {
   }
   return [...found].map(el => ({
     ref: refFor(el),
+    unfilled: el.matches(DIALOGS) && dialogUnfilled(el),
     label: el.getAttribute('aria-label') || document.getElementById(el.getAttribute('aria-labelledby') || '')?.innerText ||
       el.querySelector('h1, h2, h3, [role=heading]')?.innerText || '',
     invisible: shownOpacity(el) < INVISIBLE_OPACITY,
@@ -437,7 +457,36 @@ function pageState(el) {
     editing: Boolean(focus && focus !== document.body &&
       (focus.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(focus.tagName))),
     expanded: el?.getAttribute?.('aria-expanded'),
-    checked: el ? el.checked ?? el.getAttribute?.('aria-checked') : undefined,
+    // A toggle is often a label around a hidden checkbox
+    checked: el ? (el.control ?? el).checked ?? el.getAttribute?.('aria-checked') : undefined,
+    selected: el?.getAttribute?.('aria-selected') ?? el?.getAttribute?.('aria-current'),
+  };
+}
+
+// Long enough for a real click that waited its turn or for the person to pause
+const CLICK_WATCH_MS = 30000;
+
+// Whether anything in the page's document changes from now on: a chat list row
+// took clicks that "succeeded" while the pane stayed on the old chat, and none
+// of what pageState looks at moves for a click like that. Gives null once the
+// watch has run out, when it can no longer say. The overlay and its marks on
+// the page are not the page's own changes. Started as late as can be, so a
+// clock ticking while the cursor travels isn't taken for the click's doing.
+function watchPage() {
+  if (!document.body) return () => null;
+  const pagesOwn = records => records.some(record => !record.attributeName?.startsWith('data-foxmcp'));
+  let changed = false;
+  let expired = false;
+  const observer = new MutationObserver(records => { changed = changed || pagesOwn(records); });
+  observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+  // A theme switch is often one attribute on <html>
+  observer.observe(document.documentElement, { attributes: true });
+  const timer = setTimeout(() => { expired = true; observer.disconnect(); }, CLICK_WATCH_MS);
+  return () => {
+    changed = changed || pagesOwn(observer.takeRecords());
+    observer.disconnect();
+    clearTimeout(timer);
+    return changed || (expired ? null : false);
   };
 }
 
@@ -578,7 +627,15 @@ async function clickEffect(before) {
   if (after.checked !== before.checked && after.checked != null) {
     changes.push(after.checked === true || after.checked === 'true' ? 'it is now checked' : 'it is now unchecked');
   }
+  if (after.selected !== before.selected && after.selected != null) {
+    changes.push(after.selected === 'false' ? 'it is no longer selected' : 'it is now selected');
+  }
+  const pageChanged = before.pageChanged?.();
   const effect = changes.length ? changes.join('; ')
+    : pageChanged === false ? `no change seen in ${CLICK_EFFECT_MS[1] / 1000} s to the address, focus, menus, dialogs or the page's ` +
+      'content. It may be slow to react, and a frame, a canvas, shadow DOM or a style can change without showing here, ' +
+      'so look again before clicking again'
+    : pageChanged ? 'the page\'s content changed, perhaps not from the click; the address, focus, menus and dialogs did not'
     : 'no change to the address, focus, menus or dialogs (a canvas may still have changed)';
   return before.covered ? `${before.covered}; ${effect}` : effect;
 }
@@ -1698,6 +1755,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
           showOverlay('clicking');
           moveCursorToPoint(point, point.size, true)
             .then(() => {
+              before.pageChanged = watchPage();
               const init = mouseInit(point, data.rightClick ? { button: 2, buttons: 2 } : { buttons: 1 });
               for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
                 point.el.dispatchEvent(new (type.startsWith('pointer') ? PointerEvent : MouseEvent)(type, init));
@@ -1722,6 +1780,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
         moveCursorTo(el, true)
           .then(() => {
             before.covered = coverOf(el);
+            before.pageChanged = watchPage();
             clickElement(el, data.rightClick ? 'right' : data.doubleClick ? 2 : 1);
             return clickEffect(before);
           })
@@ -1770,7 +1829,10 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
         (el ? moveCursorTo(el, data.purpose === 'click') : Promise.resolve())
           .then(() => {
             document.documentElement.setAttribute('data-foxmcp-tab', data.token);
-            if (el && data.purpose === 'click') pendingClicks.get(data.token).covered = coverOf(el);
+            if (el && data.purpose === 'click') {
+              pendingClicks.get(data.token).covered = coverOf(el);
+              pendingClicks.get(data.token).pageChanged = watchPage();
+            }
             // The first line of a link that wraps, as for the cover check
             const rect = el && (el.getClientRects()[0] || el.getBoundingClientRect());
             // A key for a field that has the focus needs no click, which would
@@ -1873,6 +1935,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
           moveCursorToPoint(from, from.size, data.purpose === 'click' || drag)
             .then(() => {
               document.documentElement.setAttribute('data-foxmcp-tab', data.token);
+              if (data.purpose === 'click') pendingClicks.get(data.token).pageChanged = watchPage();
               // The cursor follows the real drag on screen, the hand closed
               // until it lets go. A page's drag-and-drop is scripted instead
               // (see content_drag), which draws its own.
@@ -2038,7 +2101,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'overlayVisibility': {
         const host = document.getElementById(OVERLAY_ID);
         if (host) host.style.visibility = data.visible ? 'visible' : 'hidden';
-        sendResponse({ ok: true });
+        sendResponse({ ok: true, pixelRatio: window.devicePixelRatio });
         break;
       }
 
