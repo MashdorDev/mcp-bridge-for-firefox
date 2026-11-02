@@ -637,20 +637,51 @@ const COMMIT_SETTLE_MS = 300;
 //
 // The caret goes at the end of the last text, not at the end of the element:
 // after the last <p> of a ProseMirror editor (ChatGPT) each piece typed there
-// became a paragraph of its own, splitting words across lines.
+// became a paragraph of its own, splitting words across lines. Draft.js throws
+// on a caret there, and stops drawing what it holds.
+//
+// Added text also comes here: the click that focused the field landed mid-text,
+// and Control+End does not move the caret on every platform or through window
+// input.
 function caretToEnd(el) {
-  const range = document.createRange();
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  let last = null;
-  while (walker.nextNode()) last = walker.currentNode;
-  if (last) {
-    range.setStart(last, last.length);
-  } else {
-    let deepest = el;
-    while (deepest.lastElementChild && deepest.lastElementChild.tagName !== 'BR') deepest = deepest.lastElementChild;
-    range.selectNodeContents(deepest);
+  if (!el.isContentEditable) {
+    if (el.setSelectionRange && typeof el.value === 'string') {
+      // Number and email inputs throw here, and keep their caret at the end anyway
+      try { el.setSelectionRange(el.value.length, el.value.length); } catch (error) { /* see above */ }
+    }
+    return;
   }
-  range.collapse(false);
+  const host = editingHost(el);
+  const range = document.createRange();
+  // Whitespace between tags is not text, unless the editor keeps it (Draft.js);
+  // a non-breaking space is what editors put in a blank line. A <br> is a place
+  // to type: an empty last paragraph, or a last blank line. Text goes after an
+  // image, as after a mention.
+  const atom = node => /^(img|hr|video|audio|canvas|embed|object|iframe|svg)$/.test(node.localName);
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  let last = null;
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.nodeType === Node.TEXT_NODE
+      ? /[^ \t\r\n\f]/.test(node.data) || /pre|break-spaces/.test(getComputedStyle(node.parentElement).whiteSpace)
+      : node.tagName === 'BR' || atom(node)) last = node;
+  }
+  const uneditable = (last?.nodeType === Node.TEXT_NODE ? last.parentElement : last)?.closest('[contenteditable=false]');
+  if (uneditable && host.contains(uneditable)) {
+    // After a mention, say, which can't take a caret
+    range.setStartAfter(uneditable);
+  } else if (last?.nodeType === Node.TEXT_NODE) {
+    range.setStart(last, last.length);
+  } else if (last) {
+    if (atom(last)) range.setStartAfter(last);
+    else range.setStartBefore(last);
+  } else {
+    let deepest = host;
+    while (deepest.lastElementChild?.isContentEditable) deepest = deepest.lastElementChild;
+    range.selectNodeContents(deepest);
+    range.collapse(false);
+  }
+  range.collapse(true);
   const selection = window.getSelection();
   selection.removeAllRanges();
   selection.addRange(range);
@@ -826,21 +857,6 @@ function focusedField() {
       || (el instanceof HTMLInputElement && !el.readOnly && !el.disabled && !notText.includes(el.type)))) return el;
   throw new Error('No ref, selector or field was given and no editable field in this page has the focus ' +
     '(one in a frame or a shadow root cannot be seen from here)');
-}
-
-// Where added text goes: the click that focused the field landed mid-text, and
-// Control+End does not move the caret on every platform or through window input
-function caretToEnd(el) {
-  if (!el.isContentEditable) {
-    if (el.setSelectionRange && typeof el.value === 'string') {
-      // Number and email inputs throw here, and keep their caret at the end anyway
-      try { el.setSelectionRange(el.value.length, el.value.length); } catch (error) { /* see above */ }
-    }
-    return;
-  }
-  const selection = el.ownerDocument.getSelection();
-  selection.selectAllChildren(editingHost(el));
-  selection.collapseToEnd();
 }
 
 // Submits the form of a field the page replaced on blur, which a key press can

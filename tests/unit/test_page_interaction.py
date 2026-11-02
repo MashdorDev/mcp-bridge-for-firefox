@@ -9,6 +9,9 @@ opens a mousedown menu from one that does not.
 """
 
 import base64
+import re
+from collections import Counter
+from pathlib import Path
 
 import pytest
 
@@ -310,3 +313,12 @@ class TestRealInputOnly:
 
         assert stub_server.sent_request["action"] == "content.click"
         assert result == 'Clicked [r2] button "Save"'
+
+
+@pytest.mark.parametrize("script", ["content.js", "background.js"])
+def test_an_extension_script_defines_each_function_once(script):
+    """A second top-level function of the same name replaces the first without a
+    word: a caretToEnd added for appending undid the one rich editors relied on"""
+    source = (Path(__file__).parents[2] / "extension" / script).read_text(encoding="utf-8")
+    names = re.findall(r"^(?:async )?function (\w+)", source, re.MULTILINE)
+    assert not [name for name, count in Counter(names).items() if count > 1]
