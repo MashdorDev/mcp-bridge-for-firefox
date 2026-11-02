@@ -105,7 +105,7 @@ it, which keeps the tool list shorter.
     instead of an element, for canvases such as a Miro board
 - `content_read(tab_id, ref=None, selector=None, text=None, max_length=20000)` - The text of one element, such as a side panel or a table; a form field gives its value
 - `content_wait_for(tab_id, selector=None, text=None, title=None, gone=False, timeout=10)` - Wait until an element shows, or text is on the page or in its title, or with `gone` until it isn't. Keeps waiting across a navigation
-- `content_dialogs(tab_id)` - The dialogs open on a page with their buttons, including an invisible one or a backdrop taking the page's clicks
+- `content_dialogs(tab_id)` - The dialogs open on a page with their buttons, including an invisible one or a backdrop taking the page's clicks, and which have nothing but a title and a close control, so may never have loaded
 - `content_select_option(tab_id, option, ref=None, selector=None, text=None, timeout=5)` - Choose an option in a native or custom dropdown
 - `page_fetch_json(tab_id, path, max_length=20000)` - A GET to the page's own http(s) origin, with its sign-in. A site's GET route that changes something still does. Needs "Run scripts" in the add-on's settings
 - `content_execute_script` takes `page_realm=True` to run among the page's own scripts, for page objects the isolated realm can't iterate, unless the page's security policy forbids it
@@ -232,7 +232,7 @@ from `webRequest` and is captured for every matching request.
 ### Browser Selection Tools
 Several Firefox profiles can be connected at once. Every other tool acts on the
 active one, and tab, window and bookmark ids belong to that browser.
-- `browsers_list()` - List connected browsers with name, id, add-on version, and which is active
+- `browsers_list()` - List connected browsers with name, id, add-on version, real input, display scale, and which is active
 - `browsers_select(browser)` - Make a browser active, by its name (case-insensitive) or the start of its id
   - Running request monitors stay with the browser they were started in
 
