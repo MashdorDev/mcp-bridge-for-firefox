@@ -1338,8 +1338,13 @@ class FoxMCPTools:
                 captured_tab = response["data"].get("tabId")
                 shown = f"tab {captured_tab}, window {captured_window_id}" if captured_tab else f"window {captured_window_id}"
 
+                # A saved image keeps every device pixel, so a point read off it
+                # is not one content_click takes
+                ratio = response["data"].get("pixelRatio")
+                scaled = (f", {ratio:g} image pixels per CSS pixel: divide a point read off it by {ratio:g} for content_click"
+                          if filename and ratio and ratio != 1 else "")
                 return self._screenshot_result(
-                    data_url, captured_format, filename, f"{shown}, {captured_format}, quality: {captured_quality}")
+                    data_url, captured_format, filename, f"{shown}, {captured_format}, quality: {captured_quality}{scaled}")
 
             elif response.get("type") == "error":
                 error_msg = response.get("data", {}).get("message", "Unknown error")
@@ -2156,6 +2161,8 @@ class FoxMCPTools:
                 active = " (active)" if browser.key == server.active_browser else ""
                 version = f", add-on {browser.version}" if browser.version else ", add-on older than 1.4.3"
                 version += ", real input on" if browser.real_input else ", real input off"
+                scale = getattr(browser, 'display_scale', None)
+                version += f", display scale {scale * 100:.0f}%" if scale else ""
                 minutes = int((time.time() - browser.connected_at) // 60)
                 app = " [Thunderbird]" if browser.app == 'thunderbird' else ""
                 app += " [agent profile]" if getattr(browser, 'agent_profile', False) else ""
@@ -2850,6 +2857,10 @@ class FoxMCPTools:
                          if on]
                 notes = f" ({', '.join(notes)})" if notes else ""
                 lines.append(f"- [{dialog['ref']}] {dialog.get('label') or 'unnamed'}{notes}: {dialog.get('text') or 'no text'}")
+                if dialog.get("unfilled"):
+                    lines.append("  Nothing is in it but a title and a way to close it, so its content may still be "
+                                 "on its way. If it stays this way, it may never have loaded: reloading the page "
+                                 "is a way out, and loses anything unsaved behind it")
                 if dialog.get("buttons"):
                     lines.append("  Buttons: " + ", ".join(f"[{b['ref']}] {b['name']}" for b in dialog["buttons"]))
             return PageContent("\n".join(lines))

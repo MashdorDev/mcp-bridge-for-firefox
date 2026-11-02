@@ -153,7 +153,7 @@ async function browserIdentity() {
   }
   return { instance_id: instanceId, name: stored.browserName, version: browser.runtime.getManifest().version,
     real_input: Boolean(stored.realInput), real_input_port: Number(stored.realInputPort) || 0,
-    agent_profile: Boolean(stored.agentProfile) };
+    agent_profile: Boolean(stored.agentProfile), display_scale: window.devicePixelRatio };
 }
 
 async function sendHello(socket) {
@@ -1011,7 +1011,7 @@ async function handleTabsAction(id, action, data) {
           : Promise.resolve();
 
         try {
-          await setOverlay(false);
+          const shownState = await setOverlay(false);
           if (data.scale) options.scale = data.scale;
           const dataUrl = await (wantedTab
             ? browser.tabs.captureTab(wantedTab.id, options)
@@ -1023,7 +1023,13 @@ async function handleTabsAction(id, action, data) {
             quality: options.quality,
             windowId: shownTab ? shownTab.windowId : windowId,
             tabId: shownTab ? shownTab.id : null,
-            title: shownTab ? shownTab.title : ''
+            title: shownTab ? shownTab.title : '',
+            // No content script yet in a tab that was open before the add-on
+            pixelRatio: data.scale || shownState?.pixelRatio || (shownTab
+              ? (await Promise.race([
+                browser.tabs.executeScript(shownTab.id, { code: 'devicePixelRatio', runAt: 'document_start' }).catch(() => []),
+                new Promise(resolve => setTimeout(resolve, SCRIPT_PROBE_LIMIT_MS, [])),
+              ]))[0] : undefined)
           });
         } catch (captureError) {
           sendError(id, 'CAPTURE_ERROR', `Failed to capture screenshot: ${captureError.message}`);

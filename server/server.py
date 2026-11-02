@@ -172,6 +172,8 @@ class BrowserConnection:
     # they set (0: find it), and the port it was last found on
     # The person set this Firefox aside for agents
     agent_profile: bool = False
+    # Pages failed by profile rather than by site at 250%, so it is worth seeing
+    display_scale: Optional[float] = None
     real_input: bool = False
     real_input_port: int = 0
     real_input_found: int = 0
@@ -433,6 +435,8 @@ class FoxMCPServer:
         browser.said_hello = True
         browser.agent_profile = bool(data.get('agent_profile'))
         browser.real_input = bool(data.get('real_input'))
+        scale = data.get('display_scale')
+        browser.display_scale = float(scale) if isinstance(scale, (int, float)) and scale > 0 else None
         browser.real_input_missed_at = 0.0  # the person may just have set it up
         try:
             browser.real_input_port = int(data.get('real_input_port') or 0)

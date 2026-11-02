@@ -104,3 +104,53 @@ async def test_read_cuts_long_text_and_says_so(server):
         answer = await call(server, "content_read", tab_id=1, selector="#panel", max_length=10)
         task.cancel()
     assert "x" * 10 + "\\n" in answer.replace("\n", "\\n") and "Cut at 10 of 50" in answer
+
+
+@pytest.mark.asyncio
+async def test_a_dialog_with_nothing_in_it_suggests_a_reload(server):
+    dialog = {"ref": "r1", "label": "Details", "text": "Details", "unfilled": True,
+              "buttons": [{"ref": "r2", "name": "Close"}]}
+    async with connect_as_extension(f"ws://localhost:{server.port}") as ws:
+        task = asyncio.create_task(answering(ws, [{"dialogs": [dialog]}]))
+        answer = await call(server, "content_dialogs", tab_id=1)
+        task.cancel()
+    assert "never have loaded" in answer and "reloading the page" in answer
+
+
+@pytest.mark.asyncio
+async def test_a_filled_dialog_suggests_nothing(server):
+    dialog = {"ref": "r1", "label": "Details", "text": "All of it", "unfilled": False, "buttons": []}
+    async with connect_as_extension(f"ws://localhost:{server.port}") as ws:
+        task = asyncio.create_task(answering(ws, [{"dialogs": [dialog]}]))
+        answer = await call(server, "content_dialogs", tab_id=1)
+        task.cancel()
+    assert "never have loaded" not in answer
+
+
+@pytest.mark.asyncio
+async def test_browsers_list_says_the_display_scale(server):
+    async with connect_as_extension(f"ws://localhost:{server.port}") as ws:
+        await ws.send(json.dumps({"id": "h", "type": "hello", "action": "browser.hello", "data": {
+            "instance_id": "abcd1234", "version": "1.14.0", "display_scale": 2.5}}))
+        await asyncio.sleep(0.2)
+        answer = await call(server, "browsers_list")
+    assert "display scale 250%" in answer
+
+
+@pytest.mark.asyncio
+async def test_a_script_timeout_does_not_only_blame_the_page(server, monkeypatch):
+    async def timed_out(request, **kwargs):
+        return {"error": "Tab 1 did not answer in 30 seconds, so its page is probably hung."}
+    monkeypatch.setattr(server, "send_request_and_wait", timed_out)
+    answer = await call(server, "content_execute_script", tab_id=1, code="await x")
+    assert "never finishes" in answer
+
+
+@pytest.mark.asyncio
+async def test_a_display_scale_that_is_not_a_number_does_not_break_the_list(server):
+    async with connect_as_extension(f"ws://localhost:{server.port}") as ws:
+        await ws.send(json.dumps({"id": "h", "type": "hello", "action": "browser.hello", "data": {
+            "instance_id": "abcd1234", "version": "1.14.0", "display_scale": "2.5"}}))
+        await asyncio.sleep(0.2)
+        answer = await call(server, "browsers_list")
+    assert "abcd1234" in answer and "display scale" not in answer
