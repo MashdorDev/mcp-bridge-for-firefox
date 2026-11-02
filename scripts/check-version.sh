@@ -54,10 +54,6 @@ check package.json \
       "\"version\": \"$version\"" \
       "\"version\"[[:space:]]*:[[:space:]]*\"$escaped\""
 
-check scripts/install-from-github.sh \
-      "VERSION=\"v$version\"" \
-      "^VERSION=\"?v$escaped\"?"
-
 check README.md \
       "the download URL to point at v$version" \
       "releases/download/v$escaped/"

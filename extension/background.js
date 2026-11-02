@@ -11,6 +11,19 @@ let isConnected = false;
 // The person's settings (settings.js), kept current as they change them
 let settings = { ...SETTINGS_DEFAULTS };
 loadSettings().then(saved => { settings = saved; updateBadge(); });
+// "Run scripts in pages" became opt-in in 1.15.0. The first run of 1.15.0 or
+// later decides once: a profile that already had an instanceId (written by
+// every version since several profiles could connect) is an older install and
+// keeps scripts on, unless the person had already chosen. A new install keeps
+// the default. Not onInstalled: it does not fire for an update applied while
+// the add-on was disabled. This get is issued before browserIdentity() can
+// write an instanceId, so it sees the profile as it was.
+browser.storage.local.get(['allowScripts', 'instanceId', 'scriptsOptInChecked']).then(stored => {
+  if (stored.scriptsOptInChecked) return;
+  const update = { scriptsOptInChecked: true };
+  if (stored.allowScripts === undefined && stored.instanceId) update.allowScripts = true;
+  return browser.storage.local.set(update);
+});
 browser.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   for (const [key, change] of Object.entries(changes)) {
@@ -459,6 +472,9 @@ async function loadConfig() {
   console.log('🌐 WebSocket URL will be:', `ws://${CONFIG.hostname}:${CONFIG.port}`);
 
   if (result.testPort || result.testHostname) {
+    // Test profiles are new installs, where scripts start off
+    const { allowScripts } = await browser.storage.local.get('allowScripts');
+    if (allowScripts === undefined) await browser.storage.local.set({ allowScripts: true });
     console.log('🧪 Test overrides active:', {
       testPort: result.testPort,
       testHostname: result.testHostname
@@ -540,7 +556,7 @@ async function refusalFor(action, data) {
     return 'The person using this Firefox has paused the agent. They can resume it from the MCP Bridge button in the toolbar.';
   }
   if (!settings[permission]) {
-    return `"${PERMISSION_NAMES[permission]}" is turned off in this browser's MCP Bridge settings.`;
+    return `"${PERMISSION_NAMES[permission]}" is turned off in this browser's MCP Bridge settings. The person can turn it on in the add-on's options (about:addons).`;
   }
   if (action === 'windows.create' && data.incognito && !settings.allowPrivate) {
     return 'The agent is not allowed in private windows (MCP Bridge settings).';
