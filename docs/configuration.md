@@ -481,7 +481,7 @@ lets go of its tabs. The same switch is in the toolbar popup.
 **Allowed** lists ten groups of actions, each able to be turned on or off on its
 own. All are on by default except "Run scripts in pages", which a new install
 starts with off, so that running code an agent sends is the person's choice. A
-profile updated from a version before 1.15.0 keeps it on. A refused request
+profile that had connected to a server on an earlier version keeps it on. A refused request
 reaches the agent as an error naming the group, such as `"Run scripts in pages"
 is turned off in this browser's MCP Bridge settings.`
 
