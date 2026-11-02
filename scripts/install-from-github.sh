@@ -7,7 +7,7 @@
 set -e
 
 VERSION="v1.14.0"
-GITHUB_REPO="ThinkerYzu/foxmcp"
+GITHUB_REPO="MashdorDev/mcp-bridge-for-firefox"
 GITHUB_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/$VERSION"
 GITHUB_RELEASE_URL="https://github.com/$GITHUB_REPO/releases/download/$VERSION"
 
@@ -95,8 +95,8 @@ download_release() {
 
     # Download Firefox extension
     info "Downloading Firefox extension..."
-    if ! curl -L -o "foxmcp@codemud.org.xpi" "$GITHUB_RELEASE_URL/foxmcp@codemud.org.xpi"; then
-        error "Failed to download Firefox extension from $GITHUB_RELEASE_URL/foxmcp@codemud.org.xpi"
+    if ! curl -L -o "foxmcp@dorzairi.dev.xpi" "$GITHUB_RELEASE_URL/foxmcp@dorzairi.dev.xpi"; then
+        error "Failed to download Firefox extension from $GITHUB_RELEASE_URL/foxmcp@dorzairi.dev.xpi"
     fi
 
     # Download install-xpi.sh script
@@ -142,7 +142,7 @@ extract_and_setup() {
     mkdir -p scripts
 
     # Move files to expected locations
-    cp foxmcp-downloads/"foxmcp@codemud.org.xpi" dist/packages/
+    cp foxmcp-downloads/"foxmcp@dorzairi.dev.xpi" dist/packages/
     cp foxmcp-downloads/install-xpi.sh scripts/
 
     # Create predefined scripts directory and move downloaded scripts
@@ -399,7 +399,7 @@ print_installation_guide() {
     echo "     └── requirements.txt           - Python dependencies"
     echo "   • venv/                          - Python virtual environment"
     echo "   • predefined-scripts/            - Directory for custom browser scripts"
-    echo "   • dist/packages/foxmcp@codemud.org.xpi - Firefox extension (proper path)"
+    echo "   • dist/packages/foxmcp@dorzairi.dev.xpi - Firefox extension (proper path)"
     echo "   • scripts/install-xpi.sh         - Extension installation script"
     echo ""
     echo -e "${BLUE}📚 Documentation:${NC}"
