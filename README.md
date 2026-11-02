@@ -45,7 +45,9 @@ before answering anything. Setup: [docs/thunderbird.md](docs/thunderbird.md).
 
 ### 1. The add-on
 
-Install **MCP Bridge for Firefox** from Firefox Add-ons (listing in review). Until then, install the signed build from this repo's releases: download [mcp-bridge-for-firefox-1.15.0.xpi](https://github.com/MashdorDev/mcp-bridge-for-firefox/releases/download/v1.15.0/mcp-bridge-for-firefox-1.15.0.xpi) and open it in Firefox.
+Install **[MCP Bridge for Firefox](https://addons.mozilla.org/firefox/addon/mcp-bridge-for-firefox/)** from Firefox Add-ons. Version 1.15.0 was submitted on 2026-11-02 and the listing goes live when Mozilla's review approves it. The signed [mcp-bridge-for-firefox-1.15.0.xpi](https://github.com/MashdorDev/mcp-bridge-for-firefox/releases/download/v1.15.0/mcp-bridge-for-firefox-1.15.0.xpi) is attached to the release at the same time. Until then, download [mcp-bridge-for-firefox-1.14.0.xpi](https://github.com/MashdorDev/mcp-bridge-for-firefox/releases/download/v1.14.0/mcp-bridge-for-firefox-1.14.0.xpi) and open it in Firefox.
+
+From 1.15.0, a new install starts with **Run scripts in pages** turned off, so `content_execute_script`, `page_fetch_json` and `content_execute_predefined` are refused until you tick it in the add-on's options (about:addons). Everything else works without it. A profile that used an earlier version keeps it on.
 
 ### 2. The MCP server
 
