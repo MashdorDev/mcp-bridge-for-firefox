@@ -27,8 +27,10 @@ import websockets
 import uvicorn
 try:
     from .mcp_tools import FoxMCPTools, AGENT_CALL
+    from .native_host import PAIRING_TOKEN_FILE, ensure_pairing_token, register_native_host
 except ImportError:
     from mcp_tools import FoxMCPTools, AGENT_CALL
+    from native_host import PAIRING_TOKEN_FILE, ensure_pairing_token, register_native_host
 
 # Try to import port coordinator for dynamic port allocation
 try:
@@ -101,26 +103,9 @@ AGENT_WORK_LASTS_S = 3600.0
 # add-on. Both prove they know it with an HMAC over the other's nonce, and the
 # secret itself never goes over the socket. Every server on this machine reads
 # the same file, so one pairing covers them all.
-PAIRING_TOKEN_FILE = os.path.join(os.path.expanduser('~'), '.foxmcp', 'pairing-token')
-
-
 def pairing_proof(token: str, role: str, nonce: str) -> str:
     """What `role` ('server' or 'client') sends to prove it holds the token"""
     return hmac.new(token.encode(), f"{role}|{nonce}".encode(), hashlib.sha256).hexdigest()
-
-
-def ensure_pairing_token(path: str = PAIRING_TOKEN_FILE) -> str:
-    """The token in `path`, created on first use, readable only by this user"""
-    if not os.path.exists(path):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w') as f:
-            f.write(secrets.token_hex(16))
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass  # Windows: the profile folder is already private to the user
-    with open(path) as f:
-        return f.read().strip()
 
 
 def port_is_free(port: int) -> bool:
@@ -1517,6 +1502,9 @@ async def main():
                 or os.environ.get('FOXMCP_REAL_INPUT_ONLY', '').strip().lower() in ('1', 'true', 'yes')
         )
         logger.info(f"Pairing token for the add-ons' options: {PAIRING_TOKEN_FILE}")
+        # Before the server listens, so the add-on's first hello can find it
+        if register_native_host():
+            logger.info("The Firefox add-on can read the pairing token through native messaging")
     except ValueError as e:
         parser.error(str(e))
     await server.start_server()
