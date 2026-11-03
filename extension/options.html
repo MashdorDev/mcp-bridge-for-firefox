@@ -143,7 +143,8 @@
     <label for="pairingToken">Pairing token</label>
     <div>
       <input type="password" id="pairingToken" data-setting="pairingToken" autocomplete="off" spellcheck="false" placeholder="Optional">
-      <div class="hint">Paste the contents of <code>~/.foxmcp/pairing-token</code>, which the server creates. With it set, Firefox answers only a server that holds the same token, so another program on the port gets nothing.</div>
+      <div class="hint">Leave empty: Firefox reads <code>~/.foxmcp/pairing-token</code>, which the server creates, from this computer. Paste a token here only for a server that keeps it somewhere else. With a token, Firefox answers only a server that holds the same one, so another program on the port gets nothing.</div>
+      <div class="hint" id="pairingSource" aria-live="polite"></div>
     </div>
   </div>
   <div class="field">

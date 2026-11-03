@@ -123,6 +123,20 @@ async function refreshStatus() {
   $('url').textContent = `ws://${config.hostname || $('hostname').value}:${config.port || $('port').value}`;
 }
 
+// Where the token comes from (findPairingToken in background.js). Asked on
+// load and when the token changes, not with the status: each ask starts the
+// native host.
+const PAIRING_SOURCES = {
+  typed: 'In use: the token typed above.',
+  computer: 'In use: the token from this computer.',
+  none: 'In use: none. No token is typed and none was found on this computer, so Firefox answers any server on the port.',
+};
+
+async function refreshPairingSource() {
+  const source = await browser.runtime.sendMessage({ action: 'getPairingSource' }).catch(() => null);
+  $('pairingSource').textContent = PAIRING_SOURCES[source] || '';
+}
+
 async function saveConnection() {
   const hostname = $('hostname').value.trim();
   setError('hostname', hostname ? '' : 'Enter a host, such as localhost');
@@ -247,10 +261,12 @@ $('reset').addEventListener('click', reset);
 
 // The popup can pause the agent while this page is open
 browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.pairingToken) refreshPairingSource();
   if (area === 'local' && changes.paused) {
     document.querySelector('[data-setting="paused"]').checked = Boolean(changes.paused.newValue);
   }
 });
 
 load().then(refreshStatus);
+refreshPairingSource();
 setInterval(refreshStatus, 3000);
