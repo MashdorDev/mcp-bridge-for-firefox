@@ -1,6 +1,6 @@
 # Privacy Policy: MCP Bridge for Firefox
 
-Last updated: 2026-10-12
+Last updated: 2026-11-02
 
 MCP Bridge for Firefox connects your browser to an AI client that you install and run yourself. This page explains what the add-on reads, where it sends it, and what it never does.
 
@@ -18,7 +18,7 @@ It can also act on pages: click, type, press keys, upload files you point it at,
 
 ## Where it goes
 
-The add-on sends this data over a WebSocket to the MCP server running **on your own computer** (`localhost`, port 8765 by default). The server refuses connections that come from web pages, so only the add-on can reach it. The server passes the data to the AI client you connected (for example Claude Code or Cursor), and that client may send it to its AI provider under that provider's own terms.
+The add-on sends this data over a WebSocket to the MCP server running **on your own computer** (`localhost`, port 8765 by default). The server refuses connections that come from web pages, so only the add-on can reach it. To pair with that server, the add-on also asks a small helper the server installs on your computer for the token in `~/.foxmcp/pairing-token`, and sends the helper nothing else. The server passes the data to the AI client you connected (for example Claude Code or Cursor), and that client may send it to its AI provider under that provider's own terms.
 
 ## What we never do
 

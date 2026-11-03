@@ -104,7 +104,7 @@ venv/bin/pip install .                                  # Windows: venv\Scripts\
 claude mcp add firefox -- /path/to/mcp-bridge-for-firefox/venv/bin/mcp-bridge-for-firefox --stdio
 ```
 
-The add-on connects to the server on `localhost:8765` and keeps retrying while none is running, so start order doesn't matter. Each Claude session starts its own server; the second one takes the next free port, and the add-on connects to all of them, so several sessions can use the browser at once. See [docs/configuration.md](docs/configuration.md).
+The add-on connects to the server on `localhost:8765` and keeps retrying while none is running, so start order doesn't matter. It pairs with the server by itself: the server creates `~/.foxmcp/pairing-token` and sets this computer up so Firefox can read it (native messaging), and from then on Firefox answers only a server that proves it holds the same token. Nothing to paste. See [Pairing](docs/configuration.md#pairing). Each Claude session starts its own server; the second one takes the next free port, and the add-on connects to all of them, so several sessions can use the browser at once. See [docs/configuration.md](docs/configuration.md).
 
 ## Privacy
 
