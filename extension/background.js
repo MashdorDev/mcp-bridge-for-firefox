@@ -171,14 +171,23 @@ async function browserIdentity() {
 
 async function sendHello(socket) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
-  const data = await browserIdentity();
-  if (settings.pairingToken) {
+  // Set before the first await, so a request that arrives while the token is
+  // being looked up is refused rather than answered unpaired
+  pairing.set(socket, { nonce: '', paired: false, problem: 'looking for the pairing token' });
+  // A newer hello (the token changed meanwhile) may finish first; only the
+  // newest one decides the pairing
+  const run = (helloRuns.get(socket) || 0) + 1;
+  helloRuns.set(socket, run);
+  const [data, { token }] = await Promise.all([browserIdentity(), findPairingToken()]);
+  if (helloRuns.get(socket) !== run) return;
+  if (token) {
     data.client_nonce = hexBytes(crypto.getRandomValues(new Uint8Array(16)));
-    pairing.set(socket, { nonce: data.client_nonce, paired: false,
-      problem: 'waiting for the server to prove the pairing token' });
+    pairing.set(socket, { nonce: data.client_nonce, token, paired: false,
+      problem: 'waiting for the server to prove the pairing token (a server older than 1.12 cannot; update it)' });
   } else {
     pairing.delete(socket);
   }
+  if (socket.readyState !== WebSocket.OPEN) return;
   socket.send(JSON.stringify({
     id: `hello_${Date.now()}`,
     type: 'hello',
@@ -188,31 +197,51 @@ async function sendHello(socket) {
   }));
 }
 
-// Pairing, opt-in: with a token set in the options, this browser answers only
-// a server that proves it holds the same token (pairing_proof in server.py),
-// so another local program listening on the port first gets nothing.
+// The token typed into the options wins; otherwise the server's own file,
+// which the server lets Firefox read through native messaging (native_host.py).
+// With neither, this browser stays unpaired, as it was before pairing existed.
+const NATIVE_HOST = 'dev.dorzairi.foxmcp';
+const helloRuns = new WeakMap(); // socket -> number of hellos started
+
+async function findPairingToken() {
+  // From storage, not settings, which may not have loaded on the first hello
+  const typed = (await browser.storage.local.get({ pairingToken: '' })).pairingToken.trim();
+  if (typed) return { token: typed, source: 'typed' };
+  try {
+    const reply = await browser.runtime.sendNativeMessage(NATIVE_HOST, { get: 'pairing-token' });
+    const token = typeof reply?.pairing_token === 'string' ? reply.pairing_token.trim() : '';
+    if (token) return { token, source: 'computer' };
+  } catch (error) {
+    // No server has registered the host on this computer yet
+  }
+  return { token: '', source: 'none' };
+}
+
+// Pairing: with a token, typed or read from this computer, this browser
+// answers only a server that proves it holds the same token (pairing_proof in
+// server.py), so another local program listening on the port first gets nothing.
 const pairing = new WeakMap(); // socket -> { nonce, paired, problem }
 
 const hexBytes = bytes => [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, '0')).join('');
 
-async function pairingProof(role, nonce) {
+async function pairingProof(token, role, nonce) {
   const encode = text => new TextEncoder().encode(text);
-  const key = await crypto.subtle.importKey('raw', encode(settings.pairingToken.trim()),
+  const key = await crypto.subtle.importKey('raw', encode(token),
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   return hexBytes(await crypto.subtle.sign('HMAC', key, encode(`${role}|${nonce}`)));
 }
 
 async function handleHelloAck(socket, data) {
   const state = pairing.get(socket);
-  if (!state) return;
+  if (!state || !state.token) return;
   if (!data.proof) {
     state.problem = 'the server has no pairing token; update the MCP Bridge server';
-  } else if (data.proof !== await pairingProof('server', state.nonce)) {
+  } else if (data.proof !== await pairingProof(state.token, 'server', state.nonce)) {
     state.problem = 'the server proved a different pairing token';
   } else {
     Object.assign(state, { paired: true, problem: '' });
     socket.send(JSON.stringify({ id: `auth_${Date.now()}`, type: 'auth', action: 'browser.auth',
-      data: { proof: await pairingProof('client', data.server_nonce) }, timestamp: new Date().toISOString() }));
+      data: { proof: await pairingProof(state.token, 'client', data.server_nonce) }, timestamp: new Date().toISOString() }));
   }
 }
 
@@ -514,7 +543,9 @@ async function handleMessage(message, socket = websocket) {
     return;
   }
 
-  const unpaired = settings.pairingToken && !pairing.get(socket)?.paired;
+  // A browser with no token anywhere answers unpaired, as before pairing
+  const state = pairing.get(socket);
+  const unpaired = state ? !state.paired : Boolean(settings.pairingToken);
   if (unpaired) {
     sendError(id, 'NOT_PAIRED', `This Firefox is not paired: ${pairing.get(socket)?.problem || 'no hello yet'}.`);
     return;
@@ -722,6 +753,12 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === 'getConnectionStatus') {
     connectionDetails().then(sendResponse);
+    return true;
+  }
+
+  // For the options page: where the token would come from now, never the token
+  if (request.action === 'getPairingSource') {
+    findPairingToken().then(({ source }) => sendResponse(source));
     return true;
   }
 

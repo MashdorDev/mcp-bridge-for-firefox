@@ -51,7 +51,8 @@ const SETTINGS_DEFAULTS = {
   // realInputPort only for one outside 9222-9229 (0: find it)
   realInput: true,
   realInputPort: 0,
-  // Optional: the server's ~/.foxmcp/pairing-token. When set, this browser
+  // Optional: a token typed by hand, which wins over ~/.foxmcp/pairing-token
+  // read through native messaging. With either, this browser
   // answers only a server that proves it holds the same token.
   pairingToken: '',
 };
