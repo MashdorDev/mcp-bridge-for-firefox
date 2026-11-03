@@ -347,6 +347,38 @@ overrides `FOXMCP_ENABLE_TOOLS`, when both are given.
 - **Host enforcement**: Any attempt to bind to external interfaces (e.g., `0.0.0.0`) is automatically changed to `localhost` with a warning
 - **Default secure configuration**: No configuration required for secure localhost-only operation
 
+## Pairing
+
+The add-on answers only a server that proves it holds the token in
+`~/.foxmcp/pairing-token`, so another program that takes port 8765 first gets
+nothing. Both sides send an HMAC of the other's nonce; the token never goes over
+the socket. The server creates the file on its first start, and every server on
+the computer reads the same one.
+
+Firefox finds the token by itself. At every start the server registers a native
+messaging host named `dev.dorzairi.foxmcp`, for this user only and without admin
+rights. It copies `server/native_host.py` to `~/.foxmcp/native-host/` with a
+launcher that runs it with the server's own Python, and writes the host manifest,
+which lets only the add-on (`foxmcp@dorzairi.dev`) start it:
+
+| System | Manifest |
+| --- | --- |
+| Windows | `~/.foxmcp/native-host/dev.dorzairi.foxmcp.json`, named by the registry key `HKCU\Software\Mozilla\NativeMessagingHosts\dev.dorzairi.foxmcp` |
+| macOS | `~/Library/Application Support/Mozilla/NativeMessagingHosts/dev.dorzairi.foxmcp.json` |
+| Linux | `~/.mozilla/native-messaging-hosts/dev.dorzairi.foxmcp.json` |
+
+Files are rewritten only when they change, so the last server to start decides
+which Python runs the host. The host answers one request, `{"get":
+"pairing-token"}`, with the token and nothing else. If registering fails, the
+server logs a warning and carries on.
+
+On each connection the add-on uses a token typed into its options first, and
+otherwise asks the host. With neither (no server has run on this computer yet,
+or Firefox runs as a Snap or Flatpak that cannot start programs outside it), it
+stays unpaired and answers any server, as it did before pairing. The options
+page shows which is in use: the typed token, the token from this computer, or
+none.
+
 ## Server Ports
 
 - **WebSocket Port**: Default `8765` - Used for Firefox extension communication. A server that finds it taken uses the next free one of 8766 to 8769 (see [Several sessions](#several-sessions))
@@ -549,7 +581,10 @@ the button" turns that off.
 ### Connection
 
 "This browser's name" is how `browsers_list` tells this profile apart from others
-(see [Several Firefox Profiles](#several-firefox-profiles)). Host and port are the
+(see [Several Firefox Profiles](#several-firefox-profiles)). "Pairing token" stays
+empty unless the server keeps its token somewhere other than
+`~/.foxmcp/pairing-token`; below it, the page says which token is in use (see
+[Pairing](#pairing)). Host and port are the
 server's, `localhost` and `8765` by default. "Other sessions" is how many ports
 after that one the add-on scans for more sessions, 4 by default (see [Several
 sessions](#several-sessions)). Real input is described

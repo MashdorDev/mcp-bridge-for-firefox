@@ -20,6 +20,7 @@
     "bookmarks",
     "activeTab",
     "storage",
+    "nativeMessaging",
     "clipboardRead",
     "clipboardWrite",
     "webRequest",
