@@ -55,8 +55,8 @@ check package.json \
       "\"version\"[[:space:]]*:[[:space:]]*\"$escaped\""
 
 check README.md \
-      "the download URL to point at v$version" \
-      "releases/download/v$escaped/"
+      "the install command pinned to @v$version" \
+      "mcp-bridge-for-firefox@v$escaped "
 
 check pyproject.toml \
       "version = \"$version\"" \
@@ -74,8 +74,8 @@ check CHANGELOG.md \
       "a '## [$version]' section" \
       "^##[[:space:]]+\[$escaped\]"
 
-# The README also names the version in prose next to the download URL, which is
-# easy to bump halfway. Old versions are legitimate in CHANGELOG.md and
+# The README can also name the version elsewhere in prose, which is easy to
+# bump halfway. Old versions are legitimate in CHANGELOG.md and
 # RELEASES.md, so only the README is swept.
 stale="$(grep -Eo 'v[0-9]+\.[0-9]+\.[0-9]+' README.md | sort -u | grep -v "^v$escaped$")"
 if [ -n "$stale" ]; then
