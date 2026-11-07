@@ -8,7 +8,7 @@ It is a regular Firefox add-on plus a small local MCP server. Firefox does **not
 
 Based on [FoxMCP](https://github.com/ThinkerYzu/foxmcp) by ThinkerYzu (MIT). The interaction, overlay, upload and reconnect changes are also offered upstream as pull requests.
 
-[![21-second demo: the agent reads a page, types into it and uploads a folder in a normal Firefox tab](docs/media/launch.gif)](docs/media/launch.mp4)
+[![21-second demo: Claude types into Wikipedia in a normal Firefox tab, its tabs are marked and listed, and you choose what it may do](docs/media/launch.gif)](docs/media/launch.mp4)
 
 [Watch the video with sound (MP4, 21 s)](docs/media/launch.mp4)
 
@@ -45,7 +45,7 @@ before answering anything. Setup: [docs/thunderbird.md](docs/thunderbird.md).
 
 ### 1. The add-on
 
-Install **[MCP Bridge for Firefox](https://addons.mozilla.org/firefox/addon/mcp-bridge-for-firefox/)** from Firefox Add-ons. Version 1.15.0 was submitted on 2026-11-02 and the listing goes live when Mozilla's review approves it. The signed [mcp-bridge-for-firefox-1.15.0.xpi](https://github.com/MashdorDev/mcp-bridge-for-firefox/releases/download/v1.15.0/mcp-bridge-for-firefox-1.15.0.xpi) is attached to the release at the same time. Until then, download [mcp-bridge-for-firefox-1.14.0.xpi](https://github.com/MashdorDev/mcp-bridge-for-firefox/releases/download/v1.14.0/mcp-bridge-for-firefox-1.14.0.xpi) and open it in Firefox.
+Install **[MCP Bridge for Firefox](https://addons.mozilla.org/firefox/addon/mcp-bridge-for-firefox/)** from Firefox Add-ons. Firefox keeps it up to date from there.
 
 From 1.15.0, a new install starts with **Run scripts in pages** turned off, so `content_execute_script`, `page_fetch_json` and `content_execute_predefined` are refused until you tick it in the add-on's options (about:addons). Everything else works without it. A profile that used an earlier version keeps it on.
 
