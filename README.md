@@ -14,7 +14,8 @@ Based on [FoxMCP](https://github.com/ThinkerYzu/foxmcp) by ThinkerYzu (MIT). The
 
 | | | |
 |---|---|---|
-| ![Typing into Wikipedia's search box with the agent overlay on](docs/images/screenshots/1-click-and-type.png) | ![A page read as a list of elements with refs](docs/images/screenshots/2-snapshot.png) | ![A whole folder uploaded through the page's own button](docs/images/screenshots/3-folder-upload.png) |
+| ![Claude types into Wikipedia in a normal Firefox tab; callouts point at the tab ring, its cursor, the status line, the toolbar count and the glowing border](docs/images/screenshots/amo/1-see-it-work.png) | ![How it works: your AI client, a small MCP server on your computer, this add-on, your tabs](docs/images/screenshots/amo/2-how-it-works.png) | ![A real hover opens Wikipedia's own link preview](docs/images/screenshots/amo/3-real-input.png) |
+| ![The toolbar popup lists every tab the agent works in, with a Release button for each](docs/images/screenshots/amo/4-tabs-marked.png) | ![The options page: pause the agent, and Run scripts in pages starts off](docs/images/screenshots/amo/5-permissions.png) | |
 
 ## What it can do
 
