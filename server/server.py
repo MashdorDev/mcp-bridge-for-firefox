@@ -486,10 +486,11 @@ class FoxMCPServer:
         if not nonce or browser is None:
             return
         browser.paired = False
-        ack = {'proof': None}
+        # The nonce goes back so the add-on can tell which of its hellos this answers
+        ack = {'client_nonce': nonce, 'proof': None}
         if self.pairing_token:
             browser.server_nonce = secrets.token_hex(16)
-            ack = {'server_nonce': browser.server_nonce,
+            ack = {'client_nonce': nonce, 'server_nonce': browser.server_nonce,
                    'proof': pairing_proof(self.pairing_token, 'server', nonce)}
         asyncio.create_task(websocket.send(json.dumps({
             'id': f'hello_ack_{int(time.time() * 1000)}', 'type': 'hello_ack', 'action': 'browser.hello_ack',
