@@ -83,4 +83,4 @@ async def test_a_server_without_a_token_says_so():
     server, socket = connected(token=None)
     await say(server, socket, "hello", {"instance_id": "tb1", "client_nonce": "c1"})
 
-    assert sent_ack(socket)["data"] == {"proof": None}
+    assert sent_ack(socket)["data"] == {"client_nonce": "c1", "proof": None}
