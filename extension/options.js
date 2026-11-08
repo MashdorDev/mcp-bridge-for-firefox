@@ -130,6 +130,7 @@ const PAIRING_SOURCES = {
   typed: 'In use: the token typed above.',
   computer: 'In use: the token from this computer.',
   none: 'In use: none. No token is typed and none was found on this computer, so Firefox answers any server on the port.',
+  failed: 'In use: none yet. This computer has a token but Firefox could not read it, so it answers no server until it can. Restart the MCP server, or paste the token above.',
 };
 
 async function refreshPairingSource() {

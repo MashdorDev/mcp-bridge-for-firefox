@@ -23,6 +23,20 @@ from shards import assign_files
 
 # Store allocated ports for Firefox configuration
 _allocated_test_ports = {}
+# Set for integration tests when this machine has the native host registered
+_real_token_for_firefox = None
+
+
+@pytest.fixture(autouse=True)
+def real_token_for_firefox(request):
+    """Integration test servers hold the token a real Firefox here will read"""
+    global _real_token_for_firefox
+    from server.native_host import host_paths, ensure_pairing_token
+    integration = 'integration' in request.node.path.parts
+    _real_token_for_firefox = (ensure_pairing_token()
+                               if integration and os.path.exists(host_paths()['manifest']) else None)
+    yield
+    _real_token_for_firefox = None
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -59,6 +73,12 @@ def auto_dynamic_ports():
                 _allocated_test_ports['mcp'] = mcp_port
 
             print(f"🔧 Test server using WebSocket port: {port}, MCP port: {mcp_port}")
+
+            # Firefox finds the native host per OS user, not per profile, so on a
+            # machine where a real server has run, the test Firefox pairs with the
+            # real token. A test server without it would be refused.
+            if _real_token_for_firefox and 'pairing_token' not in kwargs:
+                kwargs['pairing_token'] = _real_token_for_firefox
 
             # Call original init with dynamic ports
             return original_init(self, host=host, port=port, mcp_port=mcp_port,
