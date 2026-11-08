@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-11-08
+
 ### Added
 - **The Firefox add-on pairs with the server without a pasted token.** The server registers a native messaging host for the current user at startup (`HKCU` on Windows, the user's Mozilla folder on macOS and Linux, no admin), and the add-on asks it for `~/.foxmcp/pairing-token` when no token is typed into its options. The options page says which token is in use: typed, from this computer, or none. With none, the add-on stays unpaired as before. The add-on gains the `nativeMessaging` permission, so Firefox asks once to "exchange messages with programs other than Firefox" when it updates.
 
