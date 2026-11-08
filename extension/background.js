@@ -224,6 +224,7 @@ const HELLO_ACK_LIMIT_MS = 2000;
 // opens, before the hello has even gone out.
 const PAIRING_DECISION_LIMIT_MS = NATIVE_HOST_LIMIT_MS + HELLO_ACK_LIMIT_MS;
 const helloRuns = new WeakMap(); // socket -> number of hellos started
+let nativeLookup = null; // the sendNativeMessage promise still waiting, if any
 
 // { token, source } with source 'typed', 'computer' or 'none'; or, when the
 // host is installed but failed, { token: '', source: 'failed', failure }
@@ -231,9 +232,13 @@ async function findPairingToken() {
   // From storage, not settings, which may not have loaded on the first hello
   const typed = (await browser.storage.local.get({ pairingToken: '' })).pairingToken.trim();
   if (typed) return { token: typed, source: 'typed' };
+  // Firefox keeps a host process alive until it answers, so a hung host must
+  // not get a second one: every hello and retry shares the request in flight
+  nativeLookup ??= browser.runtime.sendNativeMessage(NATIVE_HOST, { get: 'pairing-token' })
+    .finally(() => { nativeLookup = null; });
   try {
     const reply = await Promise.race([
-      browser.runtime.sendNativeMessage(NATIVE_HOST, { get: 'pairing-token' }),
+      nativeLookup,
       new Promise((resolve, reject) => setTimeout(reject, NATIVE_HOST_LIMIT_MS, new Error('no answer'))),
     ]);
     const token = typeof reply?.pairing_token === 'string' ? reply.pairing_token.trim() : '';
