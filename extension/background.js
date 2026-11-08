@@ -174,6 +174,7 @@ async function sendHello(socket) {
   // Set before the first await, so a request that arrives while the token is
   // being looked up is refused rather than answered unpaired
   pairing.set(socket, { nonce: '', paired: false, problem: 'looking for the pairing token' });
+  startPairingDecision(socket);
   // A newer hello (the token changed meanwhile) may finish first; only the
   // newest one decides the pairing
   const run = (helloRuns.get(socket) || 0) + 1;
@@ -186,6 +187,7 @@ async function sendHello(socket) {
       problem: 'waiting for the server to prove the pairing token (a server older than 1.12 cannot; update it)' });
   } else {
     pairing.delete(socket);
+    endPairingDecision(socket);
   }
   if (socket.readyState !== WebSocket.OPEN) return;
   socket.send(JSON.stringify({
@@ -201,6 +203,13 @@ async function sendHello(socket) {
 // which the server lets Firefox read through native messaging (native_host.py).
 // With neither, this browser stays unpaired, as it was before pairing existed.
 const NATIVE_HOST = 'dev.dorzairi.foxmcp';
+// The host answers in well under a second; one that never answers must not
+// leave the browser looking for a token forever
+const NATIVE_HOST_LIMIT_MS = 3000;
+// How long a request that arrives mid-handshake waits for the pairing to be
+// decided before it is refused. Servers send requests as soon as the socket
+// opens, before the hello has even gone out.
+const PAIRING_DECISION_LIMIT_MS = NATIVE_HOST_LIMIT_MS + 2000;
 const helloRuns = new WeakMap(); // socket -> number of hellos started
 
 async function findPairingToken() {
@@ -208,13 +217,42 @@ async function findPairingToken() {
   const typed = (await browser.storage.local.get({ pairingToken: '' })).pairingToken.trim();
   if (typed) return { token: typed, source: 'typed' };
   try {
-    const reply = await browser.runtime.sendNativeMessage(NATIVE_HOST, { get: 'pairing-token' });
+    const reply = await Promise.race([
+      browser.runtime.sendNativeMessage(NATIVE_HOST, { get: 'pairing-token' }),
+      new Promise((resolve, reject) => setTimeout(reject, NATIVE_HOST_LIMIT_MS, new Error('no answer'))),
+    ]);
     const token = typeof reply?.pairing_token === 'string' ? reply.pairing_token.trim() : '';
     if (token) return { token, source: 'computer' };
   } catch (error) {
-    // No server has registered the host on this computer yet
+    // No server has registered the host on this computer yet, or it hung
+    console.debug('No pairing token from this computer:', error?.message || error);
   }
   return { token: '', source: 'none' };
+}
+
+// socket -> { done, end }: settles once the hello has decided between paired,
+// refused and unpaired, so requests that arrive meanwhile wait for the answer
+const pairingDecisions = new WeakMap();
+
+function startPairingDecision(socket) {
+  pairingDecisions.get(socket)?.end(); // waiters re-check against the new one
+  let end;
+  const done = new Promise(resolve => { end = resolve; });
+  pairingDecisions.set(socket, { done, end });
+}
+
+function endPairingDecision(socket) {
+  pairingDecisions.get(socket)?.end();
+  pairingDecisions.delete(socket);
+}
+
+async function awaitPairingDecision(socket) {
+  const deadline = Date.now() + PAIRING_DECISION_LIMIT_MS;
+  let decision;
+  while ((decision = pairingDecisions.get(socket)) && Date.now() < deadline) {
+    await Promise.race([decision.done,
+      new Promise(resolve => setTimeout(resolve, deadline - Date.now()))]);
+  }
 }
 
 // Pairing: with a token, typed or read from this computer, this browser
@@ -243,6 +281,8 @@ async function handleHelloAck(socket, data) {
     socket.send(JSON.stringify({ id: `auth_${Date.now()}`, type: 'auth', action: 'browser.auth',
       data: { proof: await pairingProof(state.token, 'client', data.server_nonce) }, timestamp: new Date().toISOString() }));
   }
+  // An ack for an older hello (the token changed since) decides nothing
+  if (pairing.get(socket) === state) endPairingDecision(socket);
 }
 
 browser.storage.onChanged.addListener((changes, area) => {
@@ -543,6 +583,7 @@ async function handleMessage(message, socket = websocket) {
     return;
   }
 
+  await awaitPairingDecision(socket);
   // A browser with no token anywhere answers unpaired, as before pairing
   const state = pairing.get(socket);
   const unpaired = state ? !state.paired : Boolean(settings.pairingToken);
