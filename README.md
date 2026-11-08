@@ -66,7 +66,7 @@ claude plugin install firefox@mcp-bridge-for-firefox
 **Or register the server directly** (needs [uv](https://docs.astral.sh/uv/)):
 
 ```bash
-claude mcp add firefox -- uvx --from git+https://github.com/MashdorDev/mcp-bridge-for-firefox@v1.15.0 mcp-bridge-for-firefox --stdio
+claude mcp add firefox -- uvx --from git+https://github.com/MashdorDev/mcp-bridge-for-firefox@v1.16.0 mcp-bridge-for-firefox --stdio
 ```
 
 Either way, restart Claude Code (or run `/mcp` and reconnect) for the browser tools to appear.
@@ -88,7 +88,7 @@ Any client that reads an `mcp.json` (Cursor, Claude Desktop, VS Code):
   "mcpServers": {
     "firefox": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/MashdorDev/mcp-bridge-for-firefox@v1.15.0", "mcp-bridge-for-firefox", "--stdio"]
+      "args": ["--from", "git+https://github.com/MashdorDev/mcp-bridge-for-firefox@v1.16.0", "mcp-bridge-for-firefox", "--stdio"]
     }
   }
 }
