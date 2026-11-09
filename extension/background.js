@@ -8,6 +8,10 @@
 let websocket = null;
 let isConnected = false;
 
+// Opt-in crash reports (reporting.js); each checks the person's consent first
+window.addEventListener('error', event => reportCrash(event.error));
+window.addEventListener('unhandledrejection', event => reportCrash(event.reason));
+
 // The person's settings (settings.js), kept current as they change them
 let settings = { ...SETTINGS_DEFAULTS };
 loadSettings().then(saved => { settings = saved; updateBadge(); });
@@ -591,6 +595,8 @@ function disconnect() {
 const replySockets = new Map(); // request id -> socket
 // The agent call behind each request, for handlers that learn the tab late (tabs.create)
 const agentCalls = new Map(); // request id -> { tool, status }
+// The action behind each request, so an error report can name it (sendError)
+const requestActions = new Map(); // request id -> action
 
 async function handleMessage(message, socket = websocket) {
   const { id, type, action, data } = message;
@@ -631,9 +637,11 @@ async function handleMessage(message, socket = websocket) {
     await markAgentActive(agentTab, { state: activity[0], label: activity[1], agentStatus, socket });
   }
 
+  requestActions.set(id, action);
   try {
     await routeAction(id, action, data);
   } finally {
+    requestActions.delete(id);
     agentCalls.delete(id);
     // Navigation keeps "waiting" until the page has loaded (see tabs.onUpdated)
     if (agentTab != null && agentTabs.has(agentTab) && activity[0] !== 'waiting') {
@@ -740,6 +748,7 @@ function sendResponse(id, action, data) {
 }
 
 function sendError(id, code, message, details = {}) {
+  reportActionError(code, requestActions.get(id));
   const socket = replySocket(id);
   if (!socket) return;
 

@@ -93,6 +93,15 @@ async function saveSetting(input) {
     return;
   }
   if (key === 'browserName') value = value.slice(0, 60);
+  // Firefox also asks for its data-collection grant, which has to come from this click
+  if (key === 'errorReports') {
+    const grant = { permissions: [], origins: [], data_collection: ['technicalAndInteraction'] };
+    if (value && !await browser.permissions.request(grant)) {
+      input.checked = false;
+      return;
+    }
+    if (!value) await browser.permissions.remove(grant);
+  }
   await browser.storage.local.set({ [key]: value });
   toast('Saved');
 }

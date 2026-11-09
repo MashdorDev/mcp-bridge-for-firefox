@@ -30,6 +30,7 @@
   "background": {
     "scripts": [
       "settings.js",
+      "reporting.js",
       "background.js"
     ],
     "persistent": true
@@ -62,7 +63,8 @@
           "websiteActivity",
           "bookmarksInfo",
           "authenticationInfo"
-        ]
+        ],
+        "optional": ["technicalAndInteraction"]
       }
     }
   }
