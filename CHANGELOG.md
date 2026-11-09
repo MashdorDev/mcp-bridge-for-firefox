@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-11-09
+
+### Added
+- **Optional error reports.** Off by default. Turn on "Send error reports" in the add-on's options, and Firefox asks for permission to share technical data, to tell the developer when the add-on fails. A report names the failed action and its error code, or for a crash, the error type and where in the add-on's code it happened. It never contains an error message, a page, an address, a file or anything the agent sent; see [PRIVACY.md](PRIVACY.md). Turning it off, or Reset, withdraws the permission.
+
 ## [1.16.0] - 2026-11-08
 
 ### Added
