@@ -62,3 +62,48 @@ def test_line_mixing_a_page_address_with_an_addon_frame_is_dropped():
 def test_error_from_outside_the_addon_is_not_reported():
     assert run("r.describeCrash({name: 'Error', stack: 'fn@https://example.org/a.js:1:1'})") is None
     assert run("r.describeCrash('a string reason')") is None
+
+
+@pytest.mark.parametrize("message", [
+    "No tab with id 42",
+    "Tabs API error: Invalid tab ID: 42",
+    "Unknown upload u-1",
+    "Content API error: can't access property \"query\", data is undefined",
+])
+def test_agent_mistakes_inside_reported_codes_are_not_reported(message):
+    assert run(f"r.describeActionError('CAPTURE_ERROR', 'tabs.captureVisibleTab', {json.dumps(message)})") is None
+
+
+SEND = """
+const sent = [];
+globalThis.browser = {
+  storage: {local: {get: async () => ({errorReports: %s})}},
+  permissions: {getAll: async () => (%s)},
+  runtime: {getManifest: () => ({version: '0.0.0'})},
+};
+globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body.split(String.fromCharCode(10))[2]).fingerprint[0]); };
+const r = require(%s);
+(async () => {
+  await Promise.all(Array.from({length: 30}, (_, i) => r.reportActionError('API_ERROR', i < 25 ? 'tabs.list' : 'tabs.a' + i)));
+  console.log(JSON.stringify(sent));
+})();
+"""
+
+
+def send_burst(setting, permissions):
+    script = SEND % (setting, permissions, json.dumps(os.path.abspath(REPORTING_JS)))
+    return json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
+
+
+def test_failures_arriving_together_send_one_report_each():
+    sent = send_burst("true", "{data_collection: ['technicalAndInteraction']}")
+    assert sorted(sent) == ["API_ERROR tabs.a25", "API_ERROR tabs.a26", "API_ERROR tabs.a27", "API_ERROR tabs.a28", "API_ERROR tabs.a29", "API_ERROR tabs.list"]
+
+
+@pytest.mark.parametrize("setting,permissions", [
+    ("false", "{data_collection: ['technicalAndInteraction']}"),
+    ("true", "{data_collection: []}"),
+    ("true", "{permissions: [], origins: []}"),  # a Firefox with no data-collection grants
+])
+def test_nothing_is_sent_without_the_setting_and_the_grant(setting, permissions):
+    assert send_burst(setting, permissions) == []

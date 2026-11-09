@@ -16,6 +16,16 @@ const MAX_REPORTS_PER_SESSION = 20; // a failing action retried in a loop should
 // mistakes (INVALID_PARAMETER), the person's settings (NOT_ALLOWED) or the
 // page's own errors (SCRIPT_ERROR), which say nothing about a bug here.
 const REPORTED_CODES = ['API_ERROR', 'CAPTURE_ERROR', 'UPLOAD_ERROR', 'STORAGE_ERROR', 'CLIPBOARD_ERROR'];
+// Those codes also wrap the agent's own mistakes: a tab or window it already
+// closed, an upload id it made up, a request with no data. Matched here only,
+// since the message itself is never sent, so they can't use up a failure's
+// one report or the session's cap.
+const AGENT_MISTAKES = [
+  /\b(No|Invalid) (tab|window) (with )?id\b/i,
+  /^Unknown upload\b/,
+  /\bdata is (undefined|null)\b/,
+  /\bMissing host permission\b/,
+];
 
 // SpiderMonkey frames: "fn@moz-extension://<uuid>/background.js:1:2"
 // The function name and file are kept to plain names, so a line that also
@@ -34,8 +44,9 @@ function reportFrames(stack) {
 }
 
 // The event for an action that answered with an error code, or null
-function describeActionError(code, action) {
+function describeActionError(code, action, message) {
   if (!REPORTED_CODES.includes(code)) return null;
+  if (AGENT_MISTAKES.some(mistake => mistake.test(String(message || '')))) return null;
   const name = /^[\w.]{1,60}$/.test(action || '') ? action : 'unknown';
   const title = `${code} ${name}`;
   return { level: 'error', message: { formatted: 'Action failed: ' + title }, fingerprint: [title], tags: { action: name, code } };
@@ -63,19 +74,27 @@ const reportsSeen = new Set();
 async function hasReportConsent() {
   const { errorReports } = await browser.storage.local.get({ errorReports: false });
   if (!errorReports) return false;
-  // The grant can be withdrawn in about:addons at any time, which wins over the setting
+  // The grant can be withdrawn in about:addons at any time, which wins over the
+  // setting. A Firefox too old to have the grant sends nothing: an imported
+  // setting alone is not consent.
   const permissions = await browser.permissions.getAll();
-  return !permissions.data_collection || permissions.data_collection.includes(REPORT_DATA_PERMISSION);
+  return Boolean(permissions.data_collection && permissions.data_collection.includes(REPORT_DATA_PERMISSION));
 }
 
 async function sendReport(event) {
+  if (!event) return;
+  const key = event.fingerprint[0];
+  if (reportsSent >= MAX_REPORTS_PER_SESSION || reportsSeen.has(key)) return;
+  // Claimed before the consent check awaits, so failures arriving together
+  // can't all pass the cap and the one-report-per-failure check
+  reportsSeen.add(key);
+  reportsSent++;
   try {
-    if (!event) return;
-    const key = event.fingerprint[0];
-    if (reportsSent >= MAX_REPORTS_PER_SESSION || reportsSeen.has(key)) return;
-    if (!await hasReportConsent()) return;
-    reportsSeen.add(key);
-    reportsSent++;
+    if (!await hasReportConsent()) {
+      reportsSeen.delete(key);
+      reportsSent--;
+      return;
+    }
 
     const eventId = crypto.randomUUID().replace(/-/g, '');
     const sentAt = new Date().toISOString();
@@ -105,8 +124,8 @@ async function sendReport(event) {
   }
 }
 
-function reportActionError(code, action) {
-  return sendReport(describeActionError(code, action));
+function reportActionError(code, action, message) {
+  return sendReport(describeActionError(code, action, message));
 }
 
 function reportCrash(error) {
@@ -114,5 +133,5 @@ function reportCrash(error) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { describeActionError, describeCrash, reportFrames, REPORTED_CODES };
+  module.exports = { describeActionError, describeCrash, reportFrames, reportActionError, REPORTED_CODES };
 }

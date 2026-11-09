@@ -748,7 +748,7 @@ function sendResponse(id, action, data) {
 }
 
 function sendError(id, code, message, details = {}) {
-  reportActionError(code, requestActions.get(id));
+  reportActionError(code, requestActions.get(id), message);
   const socket = replySocket(id);
   if (!socket) return;
 
