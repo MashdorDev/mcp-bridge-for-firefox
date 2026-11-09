@@ -65,7 +65,10 @@ function showSettings(values) {
 }
 
 async function load() {
-  showSettings(await loadSettings());
+  const values = await loadSettings();
+  showSettings(values);
+  // An imported setting, or a grant withdrawn in about:addons, sends nothing; show that
+  document.querySelector('[data-setting="errorReports"]').checked = await reportsAllowed(values.errorReports);
   const sync = await browser.storage.sync.get({ ...RETRY_DEFAULTS, hostname: null, port: null, testPort: null, testHostname: null });
   const local = await browser.storage.local.get({ hostname: null, port: null });
   // Older versions saved host and port to storage.sync
@@ -93,7 +96,48 @@ async function saveSetting(input) {
     return;
   }
   if (key === 'browserName') value = value.slice(0, 60);
+  if (key === 'errorReports') {
+    await saveErrorReports(input);
+    return;
+  }
   await browser.storage.local.set({ [key]: value });
+  toast('Saved');
+}
+
+const REPORT_GRANT = { permissions: [], origins: [], data_collection: ['technicalAndInteraction'] };
+
+// Reports need the setting and Firefox's data-collection grant (reporting.js)
+async function reportsAllowed(setting) {
+  const permissions = await browser.permissions.getAll();
+  return Boolean(setting && permissions.data_collection && permissions.data_collection.includes('technicalAndInteraction'));
+}
+
+// Firefox asks for the grant, which has to come from this click. The answer
+// can come after the person has clicked again, and then the newer click wins.
+async function saveErrorReports(input) {
+  const wanted = input.checked;
+  try {
+    if (wanted) {
+      const granted = await browser.permissions.request(REPORT_GRANT);
+      if (input.checked !== wanted) {
+        if (granted) await browser.permissions.remove(REPORT_GRANT);
+        return;
+      }
+      if (!granted) {
+        input.checked = false;
+        return;
+      }
+    } else {
+      await browser.permissions.remove(REPORT_GRANT);
+    }
+  } catch (error) {
+    // A Firefox without data-collection grants rejects both calls; reports stay off there
+    input.checked = false;
+    await browser.storage.local.set({ errorReports: false });
+    toast('Error reports need a newer Firefox');
+    return;
+  }
+  await browser.storage.local.set({ errorReports: wanted });
   toast('Saved');
 }
 
@@ -205,6 +249,8 @@ async function importSettings(file) {
   // The name belongs to the profile it came from; keep this profile's own
   delete settings.browserName;
   delete settings.pairingToken;
+  // Consent to error reports is given in this profile, with Firefox's prompt
+  delete settings.errorReports;
   await browser.storage.local.set({ ...settings, ...connection });
   await browser.storage.sync.set(picked(data.reconnect, RETRY_DEFAULTS));
   if (connection.hostname || connection.port) {
@@ -232,6 +278,8 @@ async function reset() {
   const { browserName, pairingToken } = await loadSettings();
   await browser.storage.local.set({ ...SETTINGS_DEFAULTS, browserName, pairingToken, ...CONNECTION_DEFAULTS });
   await browser.storage.sync.set(RETRY_DEFAULTS);
+  // Reports are off again, so about:addons should not keep showing the grant
+  await browser.permissions.remove(REPORT_GRANT).catch(() => {});
   await browser.runtime.sendMessage({ type: 'configUpdated', config: { ...CONNECTION_DEFAULTS, ...RETRY_DEFAULTS } });
   await load();
   toast('Settings reset');

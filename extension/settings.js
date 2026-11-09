@@ -55,6 +55,8 @@ const SETTINGS_DEFAULTS = {
   // read through native messaging. With either, this browser
   // answers only a server that proves it holds the same token.
   pairingToken: '',
+  // Opt-in error reports (reporting.js); Firefox's data-collection grant is asked for too
+  errorReports: false,
 };
 
 // Which permission each action needs. Actions not listed (ping, tabs.release,
