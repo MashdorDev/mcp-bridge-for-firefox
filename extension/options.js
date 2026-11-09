@@ -278,6 +278,8 @@ async function reset() {
   const { browserName, pairingToken } = await loadSettings();
   await browser.storage.local.set({ ...SETTINGS_DEFAULTS, browserName, pairingToken, ...CONNECTION_DEFAULTS });
   await browser.storage.sync.set(RETRY_DEFAULTS);
+  // Reports are off again, so about:addons should not keep showing the grant
+  await browser.permissions.remove(REPORT_GRANT).catch(() => {});
   await browser.runtime.sendMessage({ type: 'configUpdated', config: { ...CONNECTION_DEFAULTS, ...RETRY_DEFAULTS } });
   await load();
   toast('Settings reset');
